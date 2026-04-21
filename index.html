@@ -571,6 +571,37 @@ function App() {
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 <script>
+const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_placement'];
+
+// On page load: if UTMs are present in the URL, persist them in sessionStorage
+// so they survive reloads or re-entries via bookmark within the same session.
+(function persistUtms() {
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = {};
+  UTM_KEYS.forEach(key => {
+    const value = params.get(key);
+    if (value) fromUrl[key] = value;
+  });
+  if (Object.keys(fromUrl).length > 0) {
+    try { sessionStorage.setItem('utm_data', JSON.stringify(fromUrl)); } catch (_) {}
+  }
+})();
+
+function getUtmData() {
+  // sessionStorage wins (captured on first landing); fall back to current URL.
+  try {
+    const stored = sessionStorage.getItem('utm_data');
+    if (stored) return JSON.parse(stored);
+  } catch (_) {}
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = {};
+  UTM_KEYS.forEach(key => {
+    const value = params.get(key);
+    if (value) fromUrl[key] = value;
+  });
+  return fromUrl;
+}
+
 function wireMailerLiteForm(formId, thankYouId) {
   const form = document.getElementById(formId);
   const thankYou = document.getElementById(thankYouId);
@@ -581,9 +612,17 @@ function wireMailerLiteForm(formId, thankYouId) {
     const originalText = button ? button.textContent : null;
     if (button) { button.textContent = 'Sending...'; button.disabled = true; }
     try {
+      const formData = new FormData(form);
+      const utmData = getUtmData();
+      UTM_KEYS.forEach(key => {
+        const value = utmData[key];
+        if (value) {
+          formData.append(`fields[${key}]`, value);
+        }
+      });
       await fetch('https://assets.mailerlite.com/jsonp/2269010/forms/185326300296119357/subscribe', {
         method: 'POST',
-        body: new FormData(form),
+        body: formData,
         mode: 'no-cors'
       });
       form.style.display = 'none';
