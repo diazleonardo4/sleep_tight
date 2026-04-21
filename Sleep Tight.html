@@ -571,37 +571,6 @@ function App() {
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 </script>
 <script>
-const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_placement'];
-
-// On page load: if UTMs are present in the URL, persist them in sessionStorage
-// so they survive reloads or re-entries via bookmark within the same session.
-(function persistUtms() {
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = {};
-  UTM_KEYS.forEach(key => {
-    const value = params.get(key);
-    if (value) fromUrl[key] = value;
-  });
-  if (Object.keys(fromUrl).length > 0) {
-    try { sessionStorage.setItem('utm_data', JSON.stringify(fromUrl)); } catch (_) {}
-  }
-})();
-
-function getUtmData() {
-  // sessionStorage wins (captured on first landing); fall back to current URL.
-  try {
-    const stored = sessionStorage.getItem('utm_data');
-    if (stored) return JSON.parse(stored);
-  } catch (_) {}
-  const params = new URLSearchParams(window.location.search);
-  const fromUrl = {};
-  UTM_KEYS.forEach(key => {
-    const value = params.get(key);
-    if (value) fromUrl[key] = value;
-  });
-  return fromUrl;
-}
-
 function wireMailerLiteForm(formId, thankYouId) {
   const form = document.getElementById(formId);
   const thankYou = document.getElementById(thankYouId);
@@ -611,24 +580,49 @@ function wireMailerLiteForm(formId, thankYouId) {
     const button = form.querySelector('button');
     const originalText = button ? button.textContent : null;
     if (button) { button.textContent = 'Sending...'; button.disabled = true; }
+    const urlParams = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams();
+
+    // Copy form fields (email + hidden inputs)
+    const fd = new FormData(form);
+    for (const [key, value] of fd) {
+      params.append(key, value);
+    }
+
+    // Append UTMs if present in URL
+    ['utm_source','utm_medium','utm_campaign','utm_content','utm_placement'].forEach(k => {
+      const v = urlParams.get(k);
+      if (v) params.append(`fields[${k}]`, v);
+    });
+
     try {
-      const formData = new FormData(form);
-      const utmData = getUtmData();
-      UTM_KEYS.forEach(key => {
-        const value = utmData[key];
-        if (value) {
-          formData.append(`fields[${key}]`, value);
-        }
-      });
-      await fetch('https://assets.mailerlite.com/jsonp/2269010/forms/185326300296119357/subscribe', {
+      const response = await fetch('https://assets.mailerlite.com/jsonp/2269010/forms/185326300296119357/subscribe', {
         method: 'POST',
-        body: formData,
-        mode: 'no-cors'
+        body: params
       });
-      form.style.display = 'none';
-      thankYou.style.display = 'block';
+      const data = await response.json();
+      if (data.success) {
+        form.style.display = 'none';
+        thankYou.style.display = 'block';
+        // Track conversion in Vercel Analytics if enabled
+        if (window.va) {
+          window.va('event', {
+            name: 'Email Signup',
+            data: {
+              form: formId,
+              utm_source: urlParams.get('utm_source') || 'direct',
+              utm_content: urlParams.get('utm_content') || 'none'
+            }
+          });
+        }
+      } else {
+        throw new Error(data.message || 'Subscription failed');
+      }
     } catch (err) {
-      if (button) { button.textContent = originalText; button.disabled = false; }
+      if (button) {
+        button.textContent = originalText;
+        button.disabled = false;
+      }
       alert('Something went wrong. Please try again.');
     }
   });
