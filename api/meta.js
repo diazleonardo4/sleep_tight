@@ -2,19 +2,20 @@
 // Returns Meta Ads insights for the requested range,
 // plus per-ad and per-placement breakdowns.
 //
+// Uses explicit time_range (since/until inclusive of today). Do NOT use
+// date_preset=last_7d / last_30d — those EXCLUDE today in Meta Marketing
+// API v21, which makes today's number larger than the multi-day totals.
+//
 // Response shape:
 // {
 //   range:       "today" | "7d" | "30d",
+//   timeRange:   { since, until },
 //   summary:     { spend, impressions, clicks, reach, ctr, cpc, cpm },
 //   byAd:        [ { name, spend, impressions, clicks, ctr, cpc } ],
 //   byPlacement: [ { placement, spend, impressions, clicks, ctr } ]
 // }
 
-const RANGE_TO_PRESET = {
-  today: 'today',
-  '7d': 'last_7d',
-  '30d': 'last_30d',
-};
+const VALID_RANGES = ['today', '7d', '30d'];
 
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
@@ -34,18 +35,20 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Meta env vars not configured' });
   }
 
-  const preset = RANGE_TO_PRESET[range];
+  const timeRange = getDateRange(range);
+  const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
   try {
     const baseFields = 'spend,impressions,clicks,ctr,cpc,cpm,reach';
     const [summaryRows, perAdRows, perPlacementRows] = await Promise.all([
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=${preset}`),
-      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&date_preset=${preset}&limit=200`),
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=${preset}&breakdowns=publisher_platform,platform_position`),
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}`),
+      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&${timeRangeParam}&limit=200`),
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}&breakdowns=publisher_platform,platform_position`),
     ]);
 
     const data = {
       range,
+      timeRange,
       summary: summarize(summaryRows),
       byAd: perAdRows.map(r => ({
         name: r.ad_name || 'unnamed',
@@ -74,7 +77,21 @@ module.exports = async (req, res) => {
 function normalizeRange(req) {
   const q = (req.query && req.query.range) || new URL(req.url, 'http://x').searchParams.get('range');
   const r = String(q || '7d').toLowerCase();
-  return RANGE_TO_PRESET[r] ? r : '7d';
+  return VALID_RANGES.includes(r) ? r : '7d';
+}
+
+// Returns { since, until } as YYYY-MM-DD, INCLUSIVE of today.
+// today => 1-day window [today, today]
+// 7d    => 7-day window [today-6, today]
+// 30d   => 30-day window [today-29, today]
+function getDateRange(range) {
+  const now = new Date();
+  const until = now.toISOString().slice(0, 10);
+  if (range === 'today') return { since: until, until };
+  const daysBack = range === '30d' ? 29 : 6;
+  const from = new Date(now);
+  from.setUTCDate(from.getUTCDate() - daysBack);
+  return { since: from.toISOString().slice(0, 10), until };
 }
 
 function checkAuth(req, res) {

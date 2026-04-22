@@ -138,59 +138,59 @@
 
   /* ---------- FUNNEL ---------- */
   .funnel {
-    background: #fff; border-radius: 14px; padding: 24px 28px;
+    background: #fff; border-radius: 14px; padding: 28px 32px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+    display: flex; flex-direction: column; gap: 20px;
   }
-  .funnel__row { padding: 14px 0; border-bottom: 1px solid var(--border); }
-  .funnel__row:last-child { border-bottom: none; }
-  .funnel__head {
+  .funnel__row {
     display: grid;
-    grid-template-columns: 1fr auto auto;
-    gap: 16px; align-items: baseline;
-    margin-bottom: 8px;
+    grid-template-columns: 180px 1fr;
+    gap: 24px;
+    align-items: center;
   }
   .funnel__stage {
     font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
   }
+  .funnel__body { min-width: 0; }
+  .funnel__top {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 6px; flex-wrap: wrap;
+  }
   .funnel__value {
     font-family: 'Quicksand', sans-serif; font-weight: 700;
     font-size: 28px; color: var(--navy); line-height: 1; font-variant-numeric: tabular-nums;
   }
-  .funnel__value[data-tip] { cursor: help; border-bottom: 1px dotted var(--text-faint); }
-  .funnel__drop {
-    font-size: 12px; font-weight: 600; color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
+  .funnel__tag {
+    font-size: 11px; color: var(--text-faint); font-style: italic;
   }
-  .funnel__drop.is-high { color: var(--red); }
-  .funnel__drop.is-med { color: var(--yellow); }
-  .funnel__drop.is-low { color: var(--text-muted); }
   .funnel__bar-wrap {
-    position: relative;
     background: var(--cream-warm);
     border-radius: 6px;
-    height: 12px;
+    height: 32px;
     overflow: hidden;
   }
   .funnel__bar {
     height: 100%;
     border-radius: 6px;
+    min-width: 4px;
     transition: width 0.4s cubic-bezier(.2,.8,.2,1);
   }
   .funnel__rate {
-    display: flex; align-items: center; gap: 6px;
+    display: flex; align-items: center; gap: 8px;
     font-size: 12px; color: var(--text-muted);
-    margin-top: 6px; font-variant-numeric: tabular-nums;
+    margin-top: 8px; font-variant-numeric: tabular-nums;
+    flex-wrap: wrap;
   }
-  .funnel__rate strong { color: var(--navy); font-weight: 600; }
-  .funnel__rate .bench { font-size: 11px; color: var(--text-faint); }
+  .funnel__rate strong { color: var(--navy); font-weight: 700; }
+  .funnel__rate .bench { color: var(--text-faint); }
   .dot {
-    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
     flex-shrink: 0;
   }
-  .dot--green { background: var(--green); }
-  .dot--yellow { background: var(--yellow); }
-  .dot--red { background: var(--red); }
+  .dot--green { background: #27AE60; }
+  .dot--yellow { background: #F39C12; }
+  .dot--red { background: #E74C3C; }
   .dot--gray { background: var(--text-faint); }
 
   /* ---------- TABLES ---------- */
@@ -222,17 +222,18 @@
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
-    .funnel__head { grid-template-columns: 1fr auto; }
-    .funnel__drop { grid-column: 2; }
-    .funnel__value { grid-column: 1 / -1; font-size: 24px; }
+    .funnel__row { grid-template-columns: 140px 1fr; gap: 16px; }
+    .funnel__value { font-size: 24px; }
   }
   @media (max-width: 540px) {
     .container { padding: 24px 16px 48px; }
     .cards { grid-template-columns: 1fr; }
     .header h1 { font-size: 22px; }
     .card__value { font-size: 32px; }
-    .funnel { padding: 18px 18px; }
+    .funnel { padding: 20px 18px; gap: 18px; }
+    .funnel__row { grid-template-columns: 1fr; gap: 6px; }
     .funnel__value { font-size: 22px; }
+    .funnel__bar-wrap { height: 24px; }
     th, td { padding: 10px 12px; font-size: 13px; }
   }
 </style>
@@ -534,54 +535,51 @@
     const impressions = summary.impressions ?? 0;
     const clicks = summary.clicks ?? 0;
 
-    // Pageviews: use Vercel if available, else fall back to clicks
+    // TODO: replace with real Vercel Analytics API data once available.
+    // Currently Vercel Web Analytics has no public API, so we fall back to
+    // clicks as a proxy for pageviews (they track within ~5-10%).
     const vercelPv = (state.vercel && state.vercel.available && Number.isFinite(state.vercel.pageviews))
       ? state.vercel.pageviews
       : null;
     const pageviews = vercelPv != null ? vercelPv : clicks;
-    const pageviewsApproximated = vercelPv == null;
+    const pageviewsEstimated = vercelPv == null;
 
     const freeSubs = ml.subscribers?.freeInRange ?? 0;
     const paidSubs = ml.subscribers?.paidInRange ?? 0;
 
     const stages = [
-      { key: 'impressions', label: 'Impressions', value: impressions, rate: null },
-      { key: 'clicks',      label: 'Clicks',      value: clicks,
+      { label: 'Impressions', value: impressions },
+      { label: 'Clicks',      value: clicks,
         rate: { label: 'CTR', pct: impressions > 0 ? (clicks / impressions) * 100 : 0, bench: BENCH.ctr } },
-      { key: 'pageviews',   label: 'Pageviews',   value: pageviews,
-        tip: pageviewsApproximated ? 'Approximated from click data' : null,
+      { label: 'Pageviews',   value: pageviews,
+        tag: pageviewsEstimated ? '(estimated)' : null,
         rate: { label: 'Landing rate', pct: clicks > 0 ? (pageviews / clicks) * 100 : 0, bench: BENCH.landing } },
-      { key: 'free',        label: 'Free Subscribers', value: freeSubs,
+      { label: 'Free Subs',   value: freeSubs,
         rate: { label: 'Signup rate', pct: pageviews > 0 ? (freeSubs / pageviews) * 100 : 0, bench: BENCH.signup } },
-      { key: 'paid',        label: 'Paid Buyers', value: paidSubs,
+      { label: 'Paid',        value: paidSubs,
         rate: { label: 'Purchase rate', pct: freeSubs > 0 ? (paidSubs / freeSubs) * 100 : 0, bench: BENCH.purchase } },
     ];
 
     const top = Math.max(impressions, 1);
 
     wrap.innerHTML = stages.map((stage, i) => {
-      const prev = i > 0 ? stages[i - 1].value : null;
-      const dropPct = prev != null && prev > 0 ? ((prev - stage.value) / prev) * 100 : null;
-      const dropClass = dropPct == null ? '' : dropPct > 70 ? 'is-high' : dropPct >= 50 ? 'is-med' : 'is-low';
-      const dropText = dropPct == null ? '' : `↓ ${dropPct.toFixed(1)}% drop`;
-
-      const widthPct = Math.max((stage.value / top) * 100, stage.value > 0 ? 2 : 0);
-      const grad = barGradient(i, stages.length);
-
+      const widthPct = stage.value > 0 ? (stage.value / top) * 100 : 0;
+      const color = barColor(i, stages.length);
+      const tagHtml = stage.tag ? ` <span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
       const rateHtml = stage.rate ? renderRate(stage.rate) : '';
-      const tipAttr = stage.tip ? ` data-tip="${escapeHtml(stage.tip)}" title="${escapeHtml(stage.tip)}"` : '';
 
       return `
         <div class="funnel__row">
-          <div class="funnel__head">
-            <span class="funnel__stage">${escapeHtml(stage.label)}</span>
-            <span class="funnel__value"${tipAttr}>${fmt.int(stage.value)}</span>
-            <span class="funnel__drop ${dropClass}">${dropText}</span>
+          <span class="funnel__stage">${escapeHtml(stage.label)}</span>
+          <div class="funnel__body">
+            <div class="funnel__top">
+              <span class="funnel__value">${fmt.int(stage.value)}</span>${tagHtml}
+            </div>
+            <div class="funnel__bar-wrap">
+              <div class="funnel__bar" style="width: ${widthPct.toFixed(2)}%; background: ${color};"></div>
+            </div>
+            ${rateHtml}
           </div>
-          <div class="funnel__bar-wrap">
-            <div class="funnel__bar" style="width: ${widthPct.toFixed(2)}%; background: ${grad};"></div>
-          </div>
-          ${rateHtml}
         </div>
       `;
     }).join('');
@@ -595,21 +593,20 @@
     else dotClass = 'dot--red';
     return `
       <div class="funnel__rate">
-        <span class="dot ${dotClass}" title="Benchmark: ${rate.bench}%"></span>
         <span><strong>${rate.label}:</strong> ${rate.pct.toFixed(1)}%</span>
-        <span class="bench">benchmark ${rate.bench}%</span>
+        <span class="dot ${dotClass}" title="Benchmark: ${rate.bench}%"></span>
+        <span class="bench">vs ${rate.bench}%</span>
       </div>
     `;
   }
 
-  function barGradient(i, total) {
-    // Blend navy → gold across stages (i=0 pure navy, i=last pure gold)
+  function barColor(i, total) {
+    // Interpolate navy (#1A2744) → gold (#D4A843) across stages
     const t = total > 1 ? i / (total - 1) : 0;
     const navy = [26, 39, 68];
     const gold = [212, 168, 67];
     const mix = navy.map((n, k) => Math.round(n + (gold[k] - n) * t));
-    const color = `rgb(${mix.join(',')})`;
-    return `linear-gradient(90deg, ${color}, ${color})`;
+    return `rgb(${mix.join(',')})`;
   }
 
   function renderAdTable() {

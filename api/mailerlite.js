@@ -15,7 +15,11 @@
 //   byPlacement: { "<utm_placement>": count, ... }    // within range
 // }
 
-const RANGE_TO_DAYS = { today: 0, '7d': 7, '30d': 30 };
+// Days back from today (inclusive of today):
+// today => today only (0 days back)
+// 7d    => today + 6 prior days
+// 30d   => today + 29 prior days
+const RANGE_TO_DAYS = { today: 0, '7d': 6, '30d': 29 };
 
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
