@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sleep Tight — Control Center</title>
+<!--
+  Required env vars (set in Vercel → Project → Settings → Environment Variables):
+    DASHBOARD_PASSWORD              Any strong password
+    META_ACCESS_TOKEN               Meta system user token (ads_read scope)
+    META_AD_ACCOUNT_ID              act_XXXXXXXXX format
+    MAILERLITE_API_TOKEN            MailerLite → Settings → Integrations → API
+    MAILERLITE_FREE_EBOOK_GROUP_ID  ID of "Free Ebook Downloads" group
+    MAILERLITE_PAID_BUNDLE_GROUP_ID ID of "Paid Bundle Buyers" group
+
+  Access: https://<your-domain>/dashboard
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #1A2744;
+    --navy-deep: #13203a;
+    --gold: #D4A843;
+    --gold-soft: #fdf0cc;
+    --cream: #FDF6EC;
+    --cream-warm: #f4ecd8;
+    --text-muted: #6b7a8d;
+    --text-faint: #8a9ab5;
+    --border: #e2e8f0;
+    --green: #2e8a4e;
+    --red: #c8344a;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Nunito', sans-serif;
+    background: var(--cream);
+    color: var(--navy);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { font-family: 'Quicksand', sans-serif; letter-spacing: -0.01em; }
+  button { font-family: inherit; cursor: pointer; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px 64px; }
+  .hidden { display: none !important; }
+
+  /* ---------- LOGIN ---------- */
+  .login { display: flex; min-height: 100vh; align-items: center; justify-content: center; padding: 24px; }
+  .login__card {
+    background: #fff; border-radius: 16px; padding: 36px 32px;
+    max-width: 380px; width: 100%;
+    box-shadow: 0 8px 32px rgba(26,39,68,0.08);
+  }
+  .login__eyebrow { font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+  .login__card h1 { font-size: 24px; margin-bottom: 6px; }
+  .login__card p { color: var(--text-muted); margin-bottom: 24px; font-size: 14px; }
+  .login__input {
+    width: 100%; padding: 12px 16px;
+    border: 2px solid var(--border); border-radius: 10px;
+    font-family: 'Nunito', sans-serif; font-size: 15px; color: var(--navy);
+    margin-bottom: 12px; outline: none; transition: border-color 0.2s;
+  }
+  .login__input:focus { border-color: var(--gold); }
+  .login__btn {
+    width: 100%; padding: 12px;
+    background: var(--gold); color: var(--navy); border: none; border-radius: 10px;
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 15px;
+    transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+  }
+  .login__btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(212,168,67,0.4); }
+  .login__btn:disabled { opacity: 0.7; cursor: default; }
+  .login__error { color: var(--red); font-size: 13px; margin-bottom: 12px; display: none; }
+  .login__error.is-visible { display: block; }
+
+  /* ---------- HEADER ---------- */
+  .header {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 32px;
+  }
+  .header__title .eyebrow { margin-bottom: 4px; display: block; }
+  .header h1 { font-size: 28px; }
+  .header__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .header__time { font-size: 13px; color: var(--text-muted); margin-right: 6px; }
+
+  .btn {
+    padding: 8px 14px;
+    background: var(--navy); color: #fff; border: 1.5px solid var(--navy);
+    border-radius: 8px; font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 13px;
+    transition: all 0.15s;
+  }
+  .btn:hover { opacity: 0.9; }
+  .btn--outline { background: transparent; color: var(--navy); }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+
+  .eyebrow {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+  }
+
+  /* ---------- SECTIONS & CARDS ---------- */
+  .section { margin-bottom: 40px; }
+  .section__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+  .section__head h2 { font-size: 18px; }
+
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .card {
+    background: #fff; border-radius: 14px; padding: 20px 22px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  .card__label {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold);
+    margin-bottom: 10px;
+  }
+  .card__value {
+    font-family: 'Quicksand', sans-serif; font-weight: 700;
+    font-size: 40px; color: var(--navy); line-height: 1.1;
+  }
+  .card__value.is-skeleton { color: var(--border); }
+  .card__sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 16px; }
+  .card__sub.is-error { color: var(--red); }
+
+  /* ---------- TABLES ---------- */
+  .table-wrap {
+    background: #fff; border-radius: 14px; overflow: hidden;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 12px 16px; text-align: left; font-size: 14px; }
+  th {
+    background: var(--cream-warm);
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--navy);
+    border-bottom: 1px solid var(--border);
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr { border-top: 1px solid var(--border); }
+  tbody tr:first-child { border-top: none; }
+  tbody tr.is-winner { background: var(--gold-soft); }
+  tbody tr.is-winner td:first-child { position: relative; padding-left: 26px; font-weight: 600; }
+  tbody tr.is-winner td:first-child::before { content: '★'; position: absolute; left: 10px; color: var(--gold); }
+
+  .error {
+    background: #ffeaea; color: var(--red); padding: 14px 18px;
+    border-radius: 12px; font-size: 14px;
+  }
+  .empty { color: var(--text-muted); font-size: 14px; padding: 28px; text-align: center; }
+
+  /* ---------- RESPONSIVE ---------- */
+  @media (max-width: 900px) {
+    .cards { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 540px) {
+    .container { padding: 24px 16px 48px; }
+    .cards { grid-template-columns: 1fr; }
+    .header h1 { font-size: 22px; }
+    .card__value { font-size: 32px; }
+    th, td { padding: 10px 12px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="login" class="login">
+  <form class="login__card" id="loginForm">
+    <div class="login__eyebrow">Sleep Tight</div>
+    <h1>Control Center</h1>
+    <p>Enter the dashboard password to continue.</p>
+    <input id="loginInput" class="login__input" type="password" placeholder="Password" autocomplete="current-password" required>
+    <div id="loginError" class="login__error">Incorrect password.</div>
+    <button id="loginBtn" class="login__btn" type="submit">Sign in</button>
+  </form>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div id="dashboard" class="container hidden">
+  <div class="header">
+    <div class="header__title">
+      <span class="eyebrow">Sleep Tight</span>
+      <h1>Control Center</h1>
+    </div>
+    <div class="header__meta">
+      <span class="header__time" id="lastUpdated">—</span>
+      <button id="refreshBtn" class="btn" type="button">↻ Refresh</button>
+      <button id="exportBtn" class="btn btn--outline" type="button">Export CSV</button>
+      <button id="logoutBtn" class="btn btn--outline" type="button">Logout</button>
+    </div>
+  </div>
+
+  <!-- TODAY -->
+  <div class="section">
+    <div class="section__head"><h2>Today</h2></div>
+    <div class="cards">
+      <div class="card">
+        <div class="card__label">Ad Spend</div>
+        <div class="card__value is-skeleton" data-metric="spend-today">—</div>
+        <div class="card__sub" data-metric="spend-today-sub"></div>
+      </div>
+      <div class="card">
+        <div class="card__label">New Subscribers</div>
+        <div class="card__value is-skeleton" data-metric="subs-today">—</div>
+        <div class="card__sub" data-metric="subs-today-sub">free ebook</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Cost / Subscriber</div>
+        <div class="card__value is-skeleton" data-metric="cps-today">—</div>
+        <div class="card__sub" data-metric="cps-today-sub">spend / new subs</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Conv. Rate</div>
+        <div class="card__value is-skeleton" data-metric="cvr-today">—</div>
+        <div class="card__sub" data-metric="cvr-today-sub">new subs / clicks</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LAST 7 DAYS -->
+  <div class="section">
+    <div class="section__head"><h2>Last 7 Days</h2></div>
+    <div class="cards">
+      <div class="card">
+        <div class="card__label">Total Spend</div>
+        <div class="card__value is-skeleton" data-metric="spend-7">—</div>
+        <div class="card__sub" data-metric="spend-7-sub"></div>
+      </div>
+      <div class="card">
+        <div class="card__label">New Subscribers</div>
+        <div class="card__value is-skeleton" data-metric="subs-7">—</div>
+        <div class="card__sub">free ebook</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Avg. Cost / Sub</div>
+        <div class="card__value is-skeleton" data-metric="cps-7">—</div>
+        <div class="card__sub">7-day blended</div>
+      </div>
+      <div class="card">
+        <div class="card__label">Paid Bundle Total</div>
+        <div class="card__value is-skeleton" data-metric="paid-total">—</div>
+        <div class="card__sub">all-time buyers</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WINNING AD -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Which ad is winning?</h2>
+      <span class="eyebrow">ranked by $ / subscriber · last 7 days</span>
+    </div>
+    <div class="table-wrap" id="adTableWrap">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <!-- WINNING PLACEMENT -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Which placement is winning?</h2>
+      <span class="eyebrow">ranked by $ / subscriber · last 7 days</span>
+    </div>
+    <div class="table-wrap" id="placementTableWrap">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
+  <!-- VERCEL NOTICE -->
+  <div id="vercelNotice" class="section hidden">
+    <div class="section__head"><h2>Traffic</h2></div>
+    <div class="empty" id="vercelMsg"></div>
+  </div>
+</div>
+
+<script>
+  const TOKEN_KEY = 'sleep_tight_dashboard_token';
+  const state = { meta: null, mailerlite: null, vercel: null };
+
+  // ---------- Login ----------
+  const loginForm = document.getElementById('loginForm');
+  const loginInput = document.getElementById('loginInput');
+  const loginError = document.getElementById('loginError');
+  const loginBtn = document.getElementById('loginBtn');
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError.classList.remove('is-visible');
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Signing in…';
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: loginInput.value }),
+      });
+      if (!r.ok) throw new Error('auth');
+      const { token } = await r.json();
+      sessionStorage.setItem(TOKEN_KEY, token);
+      await showDashboard();
+    } catch (_) {
+      loginError.classList.add('is-visible');
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Sign in';
+    }
+  });
+
+  // ---------- Dashboard ----------
+  async function showDashboard() {
+    document.getElementById('login').classList.add('hidden');
+    document.getElementById('dashboard').classList.remove('hidden');
+    await refreshAll();
+  }
+
+  function authHeaders() {
+    return { 'x-auth-token': sessionStorage.getItem(TOKEN_KEY) || '' };
+  }
+
+  async function fetchJson(url) {
+    const r = await fetch(url, { headers: authHeaders() });
+    if (r.status === 401) { const e = new Error('unauthorized'); e.status = 401; throw e; }
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  }
+
+  async function refreshAll() {
+    const refreshBtn = document.getElementById('refreshBtn');
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = '↻ Loading…';
+
+    const [meta, ml, vercel] = await Promise.allSettled([
+      fetchJson('/api/meta'),
+      fetchJson('/api/mailerlite'),
+      fetchJson('/api/vercel-analytics'),
+    ]);
+
+    // Any 401 -> session expired, re-login
+    for (const r of [meta, ml, vercel]) {
+      if (r.status === 'rejected' && r.reason && r.reason.status === 401) {
+        sessionStorage.removeItem(TOKEN_KEY);
+        location.reload();
+        return;
+      }
+    }
+
+    state.meta = meta.status === 'fulfilled' ? meta.value : { error: meta.reason?.message || 'Meta data unavailable' };
+    state.mailerlite = ml.status === 'fulfilled' ? ml.value : { error: ml.reason?.message || 'MailerLite data unavailable' };
+    state.vercel = vercel.status === 'fulfilled' ? vercel.value : null;
+
+    render();
+    document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = '↻ Refresh';
+  }
+
+  // ---------- Formatters ----------
+  const fmt = {
+    money: n => Number.isFinite(+n) ? '$' + (+n).toFixed(2) : '—',
+    pct: n => Number.isFinite(+n) ? (+n).toFixed(2) + '%' : '—',
+    int: n => Number.isFinite(+n) ? Math.round(+n).toLocaleString() : '—',
+  };
+
+  function setCard(key, value, sub, isError) {
+    const el = document.querySelector(`[data-metric="${key}"]`);
+    if (el) { el.textContent = value; el.classList.remove('is-skeleton'); }
+    const subEl = document.querySelector(`[data-metric="${key}-sub"]`);
+    if (subEl && sub != null) {
+      subEl.textContent = sub;
+      subEl.classList.toggle('is-error', !!isError);
+    }
+  }
+
+  // ---------- Render ----------
+  function render() {
+    const m = state.meta || {};
+    const ml = state.mailerlite || {};
+
+    // Today
+    const spendToday = m.today?.spend;
+    const clicksToday = m.today?.clicks ?? 0;
+    const subsToday = ml.subscribers?.freeToday;
+    const cpsToday = (Number.isFinite(spendToday) && subsToday > 0) ? spendToday / subsToday : null;
+    const cvrToday = (clicksToday > 0 && Number.isFinite(subsToday)) ? (subsToday / clicksToday) * 100 : null;
+
+    if (m.error) {
+      setCard('spend-today', '—', m.error, true);
+    } else {
+      setCard('spend-today', fmt.money(spendToday), `${fmt.int(clicksToday)} clicks`);
+    }
+
+    if (ml.error) {
+      setCard('subs-today', '—', ml.error, true);
+    } else {
+      setCard('subs-today', fmt.int(subsToday), 'free ebook');
+    }
+
+    setCard('cps-today', cpsToday != null ? fmt.money(cpsToday) : '—');
+    setCard('cvr-today', cvrToday != null ? fmt.pct(cvrToday) : '—');
+
+    // Last 7 days
+    const spend7 = m.last7days?.spend;
+    const subs7 = ml.subscribers?.freeLast7;
+    const cps7 = (Number.isFinite(spend7) && subs7 > 0) ? spend7 / subs7 : null;
+
+    setCard('spend-7', m.error ? '—' : fmt.money(spend7), m.error ? m.error : `${fmt.int(m.last7days?.clicks ?? 0)} clicks`, !!m.error);
+    setCard('subs-7', ml.error ? '—' : fmt.int(subs7));
+    setCard('cps-7', cps7 != null ? fmt.money(cps7) : '—');
+    setCard('paid-total', ml.error ? '—' : fmt.int(ml.subscribers?.paid ?? 0));
+
+    renderAdTable();
+    renderPlacementTable();
+
+    const v = state.vercel;
+    if (v && v.available === false) {
+      document.getElementById('vercelNotice').classList.remove('hidden');
+      document.getElementById('vercelMsg').textContent = v.message || 'Vercel Analytics not available.';
+    }
+  }
+
+  function renderAdTable() {
+    const wrap = document.getElementById('adTableWrap');
+    const m = state.meta || {};
+    const ml = state.mailerlite || {};
+    if (m.error) { wrap.innerHTML = `<div class="error">${escapeHtml(m.error)}</div>`; return; }
+    const adSubs = ml.byAd || {};
+    const rows = (m.byAd || []).map(ad => {
+      const subs = adSubs[ad.name] || 0;
+      const cps = subs > 0 ? ad.spend / subs : Infinity;
+      return { ...ad, subs, cps };
+    });
+    rows.sort((a, b) => a.cps - b.cps);
+    if (!rows.length) { wrap.innerHTML = `<div class="empty">No ad data yet for the last 7 days.</div>`; return; }
+    const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
+
+    wrap.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Ad</th>
+          <th class="num">Clicks</th>
+          <th class="num">CTR</th>
+          <th class="num">Spend</th>
+          <th class="num">Subs</th>
+          <th class="num">$ / Sub</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr class="${i === winnerIdx ? 'is-winner' : ''}">
+              <td>${escapeHtml(r.name)}</td>
+              <td class="num">${fmt.int(r.clicks)}</td>
+              <td class="num">${fmt.pct(r.ctr)}</td>
+              <td class="num">${fmt.money(r.spend)}</td>
+              <td class="num">${fmt.int(r.subs)}</td>
+              <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderPlacementTable() {
+    const wrap = document.getElementById('placementTableWrap');
+    const m = state.meta || {};
+    const ml = state.mailerlite || {};
+    if (m.error) { wrap.innerHTML = `<div class="error">${escapeHtml(m.error)}</div>`; return; }
+    const placementSubs = ml.byPlacement || {};
+    const rows = (m.byPlacement || []).map(p => {
+      const subs = placementSubs[p.placement] || 0;
+      const cps = subs > 0 ? p.spend / subs : Infinity;
+      return { ...p, subs, cps };
+    });
+    rows.sort((a, b) => a.cps - b.cps);
+    if (!rows.length) { wrap.innerHTML = `<div class="empty">No placement data yet for the last 7 days.</div>`; return; }
+    const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
+
+    wrap.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Placement</th>
+          <th class="num">Clicks</th>
+          <th class="num">CTR</th>
+          <th class="num">Spend</th>
+          <th class="num">Subs</th>
+          <th class="num">$ / Sub</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr class="${i === winnerIdx ? 'is-winner' : ''}">
+              <td>${escapeHtml(r.placement)}</td>
+              <td class="num">${fmt.int(r.clicks)}</td>
+              <td class="num">${fmt.pct(r.ctr)}</td>
+              <td class="num">${fmt.money(r.spend)}</td>
+              <td class="num">${fmt.int(r.subs)}</td>
+              <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  // ---------- CSV export ----------
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const m = state.meta || {}, ml = state.mailerlite || {};
+    const rows = [['section', 'key', 'value']];
+    rows.push(['today', 'spend', m.today?.spend ?? '']);
+    rows.push(['today', 'clicks', m.today?.clicks ?? '']);
+    rows.push(['today', 'impressions', m.today?.impressions ?? '']);
+    rows.push(['today', 'new_subscribers', ml.subscribers?.freeToday ?? '']);
+    rows.push(['last7days', 'spend', m.last7days?.spend ?? '']);
+    rows.push(['last7days', 'clicks', m.last7days?.clicks ?? '']);
+    rows.push(['last7days', 'new_subscribers', ml.subscribers?.freeLast7 ?? '']);
+    rows.push(['totals', 'free_subscribers', ml.subscribers?.free ?? '']);
+    rows.push(['totals', 'paid_subscribers', ml.subscribers?.paid ?? '']);
+    (m.byAd || []).forEach(a => {
+      rows.push(['ad', a.name, `spend=${a.spend};clicks=${a.clicks};ctr=${a.ctr};subs=${(ml.byAd || {})[a.name] || 0}`]);
+    });
+    (m.byPlacement || []).forEach(p => {
+      rows.push(['placement', p.placement, `spend=${p.spend};clicks=${p.clicks};ctr=${p.ctr};subs=${(ml.byPlacement || {})[p.placement] || 0}`]);
+    });
+    const csv = rows.map(r => r.map(cell => {
+      const s = String(cell ?? '');
+      return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sleep-tight-metrics-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('refreshBtn').addEventListener('click', refreshAll);
+  document.getElementById('logoutBtn').addEventListener('click', () => {
+    sessionStorage.removeItem(TOKEN_KEY);
+    location.reload();
+  });
+
+  // ---------- Boot ----------
+  if (sessionStorage.getItem(TOKEN_KEY)) {
+    showDashboard();
+  } else {
+    loginInput.focus();
+  }
+</script>
+</body>
+</html>
