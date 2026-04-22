@@ -14,6 +14,8 @@ Set these in Vercel → Project Settings → Environment Variables (apply to Pro
 | `MAILERLITE_API_TOKEN` | MailerLite → Integrations → Developer API → Generate new token. | Needs read access to subscribers. |
 | `MAILERLITE_FREE_EBOOK_GROUP_ID` | MailerLite → Subscribers → Groups → click the free-ebook group → copy the numeric ID from the URL. | Numeric string. |
 | `MAILERLITE_PAID_BUNDLE_GROUP_ID` | MailerLite → Subscribers → Groups → click the paid-bundle group → copy the ID from the URL. | Numeric string. |
+| `DASHBOARD_TIMEZONE` | IANA timezone name (e.g. `America/Bogota`). Defaults to `America/Bogota` if unset. | This is the canonical TZ for all "today / 7d / 30d" date math shown in the dashboard. |
+| `META_AD_ACCOUNT_TIMEZONE` | Meta Business Settings → Ad Accounts → your account → Time zone. IANA name (e.g. `America/Los_Angeles`). Defaults to `DASHBOARD_TIMEZONE` if unset. | Only needed when your ad account TZ differs from the dashboard TZ. Controls how the dashboard-TZ range is translated for Meta's API. |
 
 After adding or changing env vars, redeploy (Vercel → Deployments → ⋯ → Redeploy) so the serverless functions pick them up.
 

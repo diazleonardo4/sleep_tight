@@ -2,20 +2,29 @@
 // Returns Meta Ads insights for the requested range,
 // plus per-ad and per-placement breakdowns.
 //
-// Uses explicit time_range (since/until inclusive of today). Do NOT use
-// date_preset=last_7d / last_30d — those EXCLUDE today in Meta Marketing
-// API v21, which makes today's number larger than the multi-day totals.
+// Timezone handling:
+//   - "today / 7d / 30d" windows are computed in DASHBOARD_TIMEZONE
+//     (see api/_utils/dates.js).
+//   - Meta's API buckets by the AD ACCOUNT timezone. Set
+//     META_AD_ACCOUNT_TIMEZONE (e.g. "America/Los_Angeles") to match
+//     what's in Meta Business Settings → Ad Accounts. If it differs
+//     from the dashboard TZ, the dashboard-TZ range is translated to
+//     the ad account TZ on the way out.
+//   - Cross-check: Meta Ads Manager shows numbers in the ad account
+//     TZ, so today's impressions may differ from the dashboard by a
+//     few % due to the offset — that's expected.
 //
 // Response shape:
 // {
 //   range:       "today" | "7d" | "30d",
-//   timeRange:   { since, until },
+//   timeRange:   { since, until },           // as sent to Meta (ad account TZ)
+//   dashboardRange: { since, until },        // original dashboard-TZ window
 //   summary:     { spend, impressions, clicks, reach, ctr, cpc, cpm },
 //   byAd:        [ { name, spend, impressions, clicks, ctr, cpc } ],
 //   byPlacement: [ { placement, spend, impressions, clicks, ctr } ]
 // }
 
-const VALID_RANGES = ['today', '7d', '30d'];
+const { getDateRange, rangeInTZ, normalizeRange, DASHBOARD_TZ } = require('./_utils/dates');
 
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
@@ -23,7 +32,7 @@ const CACHE_MS = 60 * 1000;
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
-  const range = normalizeRange(req);
+  const range = normalizeRange(readQuery(req, 'range'));
   const hit = cache.get(range);
   if (hit && Date.now() - hit.at < CACHE_MS) {
     return res.status(200).json(hit.data);
@@ -35,7 +44,9 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Meta env vars not configured' });
   }
 
-  const timeRange = getDateRange(range);
+  const adTZ = process.env.META_AD_ACCOUNT_TIMEZONE || DASHBOARD_TZ;
+  const dashboardRange = getDateRange(range);
+  const timeRange = rangeInTZ(range, adTZ);
   const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
   try {
@@ -49,6 +60,7 @@ module.exports = async (req, res) => {
     const data = {
       range,
       timeRange,
+      dashboardRange,
       summary: summarize(summaryRows),
       byAd: perAdRows.map(r => ({
         name: r.ad_name || 'unnamed',
@@ -74,24 +86,9 @@ module.exports = async (req, res) => {
   }
 };
 
-function normalizeRange(req) {
-  const q = (req.query && req.query.range) || new URL(req.url, 'http://x').searchParams.get('range');
-  const r = String(q || '7d').toLowerCase();
-  return VALID_RANGES.includes(r) ? r : '7d';
-}
-
-// Returns { since, until } as YYYY-MM-DD, INCLUSIVE of today.
-// today => 1-day window [today, today]
-// 7d    => 7-day window [today-6, today]
-// 30d   => 30-day window [today-29, today]
-function getDateRange(range) {
-  const now = new Date();
-  const until = now.toISOString().slice(0, 10);
-  if (range === 'today') return { since: until, until };
-  const daysBack = range === '30d' ? 29 : 6;
-  const from = new Date(now);
-  from.setUTCDate(from.getUTCDate() - daysBack);
-  return { since: from.toISOString().slice(0, 10), until };
+function readQuery(req, key) {
+  if (req.query && req.query[key]) return req.query[key];
+  return new URL(req.url, 'http://x').searchParams.get(key);
 }
 
 function checkAuth(req, res) {

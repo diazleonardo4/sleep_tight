@@ -2,24 +2,29 @@
 // Returns subscriber counts for the free-ebook and paid-bundle groups,
 // plus breakdowns by utm_content (ad) and utm_placement for the range.
 //
+// Timezone handling:
+//   - Ranges are resolved in DASHBOARD_TIMEZONE (see _utils/dates.js).
+//   - MailerLite returns subscribed_at as UTC ISO strings. Each one is
+//     converted to a dashboard-TZ date (YYYY-MM-DD) and compared against
+//     the range's since/until boundaries — so "today" at 10 PM Bogota
+//     includes subscribers who joined between 00:00 and 23:59 Bogota
+//     today, even though the server runs in UTC.
+//
 // Response shape:
 // {
 //   range: "today" | "7d" | "30d",
+//   dashboardRange: { since, until },        // inclusive, YYYY-MM-DD
 //   subscribers: {
 //     free:         <all-time free group total>,
 //     paid:         <all-time paid group total>,
 //     freeInRange:  <free subs created within the range>,
 //     paidInRange:  <paid subs created within the range>
 //   },
-//   byAd:        { "<utm_content>": count, ... },     // within range
-//   byPlacement: { "<utm_placement>": count, ... }    // within range
+//   byAd:        { "<utm_content>": count, ... },
+//   byPlacement: { "<utm_placement>": count, ... }
 // }
 
-// Days back from today (inclusive of today):
-// today => today only (0 days back)
-// 7d    => today + 6 prior days
-// 30d   => today + 29 prior days
-const RANGE_TO_DAYS = { today: 0, '7d': 6, '30d': 29 };
+const { getDateRange, normalizeRange, utcToDashboardDate } = require('./_utils/dates');
 
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
@@ -27,7 +32,7 @@ const CACHE_MS = 60 * 1000;
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
-  const range = normalizeRange(req);
+  const range = normalizeRange(readQuery(req, 'range'));
   const hit = cache.get(range);
   if (hit && Date.now() - hit.at < CACHE_MS) {
     return res.status(200).json(hit.data);
@@ -46,9 +51,9 @@ module.exports = async (req, res) => {
       fetchAllSubscribers(paidGroupId, token),
     ]);
 
-    const since = startOfRange(range);
-    const freeInWindow = free.filter(s => subscribedAt(s) >= since);
-    const paidInWindow = paid.filter(s => subscribedAt(s) >= since);
+    const dashboardRange = getDateRange(range);
+    const freeInWindow = filterByRange(free, dashboardRange);
+    const paidInWindow = filterByRange(paid, dashboardRange);
 
     const byAd = {};
     const byPlacement = {};
@@ -61,6 +66,7 @@ module.exports = async (req, res) => {
 
     const data = {
       range,
+      dashboardRange,
       subscribers: {
         free: free.length,
         paid: paid.length,
@@ -77,17 +83,18 @@ module.exports = async (req, res) => {
   }
 };
 
-function normalizeRange(req) {
-  const q = (req.query && req.query.range) || new URL(req.url, 'http://x').searchParams.get('range');
-  const r = String(q || '7d').toLowerCase();
-  return RANGE_TO_DAYS[r] != null ? r : '7d';
+function filterByRange(subscribers, { since, until }) {
+  return subscribers.filter(s => {
+    const iso = s.subscribed_at || s.created_at;
+    if (!iso) return false;
+    const local = utcToDashboardDate(iso); // YYYY-MM-DD in dashboard TZ
+    return local >= since && local <= until;
+  });
 }
 
-function startOfRange(range) {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - RANGE_TO_DAYS[range]);
-  return d.getTime();
+function readQuery(req, key) {
+  if (req.query && req.query[key]) return req.query[key];
+  return new URL(req.url, 'http://x').searchParams.get(key);
 }
 
 function checkAuth(req, res) {
@@ -129,9 +136,4 @@ async function fetchAllSubscribers(groupId, token) {
     if (!cursor || page.length < limit || all.length >= hardCap) break;
   }
   return all;
-}
-
-function subscribedAt(s) {
-  const v = s.subscribed_at || s.created_at;
-  return v ? new Date(v).getTime() : 0;
 }

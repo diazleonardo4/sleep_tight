@@ -82,8 +82,8 @@
   }
   .header__title .eyebrow { margin-bottom: 4px; display: block; }
   .header h1 { font-size: 28px; }
+  .header__caption { font-size: 12px; color: var(--text-muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .header__meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .header__time { font-size: 13px; color: var(--text-muted); margin-right: 6px; }
 
   .btn {
     padding: 8px 14px;
@@ -271,9 +271,9 @@
     <div class="header__title">
       <span class="eyebrow">Sleep Tight</span>
       <h1>Control Center</h1>
+      <div class="header__caption" id="headerCaption">—</div>
     </div>
     <div class="header__meta">
-      <span class="header__time" id="lastUpdated">—</span>
       <button id="refreshBtn" class="btn" type="button">↻ Refresh</button>
       <button id="exportBtn" class="btn btn--outline" type="button">Export CSV</button>
       <button id="logoutBtn" class="btn btn--outline" type="button">Logout</button>
@@ -369,7 +369,7 @@
     purchase: 3,       // paid / free × 100
   };
 
-  const state = { meta: null, mailerlite: null, vercel: null, range: getInitialRange() };
+  const state = { meta: null, mailerlite: null, vercel: null, config: null, range: getInitialRange() };
 
   function getInitialRange() {
     const urlRange = new URLSearchParams(location.search).get('range');
@@ -455,13 +455,15 @@
     refreshBtn.textContent = '↻ Loading…';
 
     const r = encodeURIComponent(state.range);
-    const [meta, ml, vercel] = await Promise.allSettled([
+    const configPromise = state.config ? Promise.resolve({ status: 'fulfilled', value: state.config }) : null;
+    const [meta, ml, vercel, config] = await Promise.allSettled([
       fetchJson(`/api/meta?range=${r}`),
       fetchJson(`/api/mailerlite?range=${r}`),
       fetchJson('/api/vercel-analytics'),
+      configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
     ]);
 
-    for (const res of [meta, ml, vercel]) {
+    for (const res of [meta, ml, vercel, config]) {
       if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
@@ -472,11 +474,23 @@
     state.meta = meta.status === 'fulfilled' ? meta.value : { error: meta.reason?.message || 'Meta data unavailable' };
     state.mailerlite = ml.status === 'fulfilled' ? ml.value : { error: ml.reason?.message || 'MailerLite data unavailable' };
     state.vercel = vercel.status === 'fulfilled' ? vercel.value : null;
+    if (config.status === 'fulfilled' && config.value) state.config = config.value;
 
     render();
-    document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    renderHeaderCaption();
     refreshBtn.disabled = false;
     refreshBtn.textContent = '↻ Refresh';
+  }
+
+  function renderHeaderCaption() {
+    const el = document.getElementById('headerCaption');
+    if (!el) return;
+    const tz = state.config?.timezone || 'UTC';
+    const nowInTz = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(new Date());
+    el.textContent = `Timezone: ${tz}  ·  Last updated: ${nowInTz}`;
   }
 
   // ---------- Formatters ----------
