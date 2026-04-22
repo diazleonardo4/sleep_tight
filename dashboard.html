@@ -225,6 +225,41 @@
   }
   .empty { color: var(--text-muted); font-size: 14px; padding: 28px; text-align: center; }
 
+  /* ---------- ENGAGEMENT / AUDIENCE ---------- */
+  .panel {
+    background: #fff; border-radius: 14px; padding: 20px 22px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 900px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+  .stat-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 10px 0; border-bottom: 1px dashed var(--border);
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-row__label { color: var(--text-muted); font-size: 13px; }
+  .stat-row__value { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .panel__title {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 12px;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--navy);
+    margin-bottom: 12px;
+  }
+  .hbar-row {
+    display: grid; grid-template-columns: 90px 1fr 60px;
+    gap: 10px; align-items: center; padding: 6px 0; font-size: 13px;
+  }
+  .hbar-row__label { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar-row__bar { background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; }
+  .hbar-row__fill { background: var(--navy); height: 100%; }
+  .hbar-row__val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .mini-funnel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .mini-funnel__col { text-align: center; }
+  .mini-funnel__val { font-size: 22px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+  .mini-funnel__label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-top: 4px; }
+
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
@@ -347,10 +382,52 @@
     </div>
   </div>
 
-  <!-- VERCEL NOTICE -->
-  <div id="vercelNotice" class="section hidden">
-    <div class="section__head"><h2>Traffic</h2></div>
-    <div class="empty" id="vercelMsg"></div>
+  <!-- ENGAGEMENT -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Engagement</h2>
+      <span class="eyebrow" id="engagementRangeLabel">last 7 days</span>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <div class="panel__title">Traffic</div>
+        <div id="engagementTraffic"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__title">Scroll depth</div>
+        <div id="engagementScroll"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__title">Form funnel</div>
+        <div id="engagementForm"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__title">Exit intent</div>
+        <div id="engagementExit"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AUDIENCE -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Audience</h2>
+      <span class="eyebrow" id="audienceRangeLabel">last 7 days</span>
+    </div>
+    <div class="grid-3">
+      <div class="panel">
+        <div class="panel__title">Top countries</div>
+        <div id="audienceCountries"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__title">Device</div>
+        <div id="audienceDevices"><div class="empty">Loading…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel__title">Top referrers</div>
+        <div id="audienceReferrers"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -369,7 +446,7 @@
     purchase: 3,       // paid / free × 100
   };
 
-  const state = { meta: null, mailerlite: null, vercel: null, config: null, range: getInitialRange() };
+  const state = { meta: null, mailerlite: null, analytics: null, config: null, range: getInitialRange() };
 
   function getInitialRange() {
     const urlRange = new URLSearchParams(location.search).get('range');
@@ -396,6 +473,8 @@
     });
     document.getElementById('metricsTitle').textContent = RANGE_TITLES[state.range];
     document.getElementById('funnelRangeLabel').textContent = RANGE_LABELS[state.range];
+    document.getElementById('engagementRangeLabel').textContent = RANGE_LABELS[state.range];
+    document.getElementById('audienceRangeLabel').textContent = RANGE_LABELS[state.range];
     document.getElementById('adTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
     document.getElementById('placementTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
   }
@@ -456,14 +535,14 @@
 
     const r = encodeURIComponent(state.range);
     const configPromise = state.config ? Promise.resolve({ status: 'fulfilled', value: state.config }) : null;
-    const [meta, ml, vercel, config] = await Promise.allSettled([
+    const [meta, ml, analytics, config] = await Promise.allSettled([
       fetchJson(`/api/meta?range=${r}`),
       fetchJson(`/api/mailerlite?range=${r}`),
-      fetchJson('/api/vercel-analytics'),
+      fetchJson(`/api/analytics?range=${r}`),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
     ]);
 
-    for (const res of [meta, ml, vercel, config]) {
+    for (const res of [meta, ml, analytics, config]) {
       if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
@@ -473,7 +552,7 @@
 
     state.meta = meta.status === 'fulfilled' ? meta.value : { error: meta.reason?.message || 'Meta data unavailable' };
     state.mailerlite = ml.status === 'fulfilled' ? ml.value : { error: ml.reason?.message || 'MailerLite data unavailable' };
-    state.vercel = vercel.status === 'fulfilled' ? vercel.value : null;
+    state.analytics = analytics.status === 'fulfilled' ? analytics.value : { error: analytics.reason?.message || 'Analytics unavailable' };
     if (config.status === 'fulfilled' && config.value) state.config = config.value;
 
     render();
@@ -539,12 +618,8 @@
     renderFunnel();
     renderAdTable();
     renderPlacementTable();
-
-    const v = state.vercel;
-    if (v && v.available === false) {
-      document.getElementById('vercelNotice').classList.remove('hidden');
-      document.getElementById('vercelMsg').textContent = v.message || 'Vercel Analytics not available.';
-    }
+    renderEngagement();
+    renderAudience();
   }
 
   // ---------- Funnel ----------
@@ -562,14 +637,12 @@
     const impressions = summary.impressions ?? 0;
     const clicks = summary.clicks ?? 0;
 
-    // TODO: replace with real Vercel Analytics API data once available.
-    // Currently Vercel Web Analytics has no public API, so we fall back to
-    // clicks as a proxy for pageviews (they track within ~5-10%).
-    const vercelPv = (state.vercel && state.vercel.available && Number.isFinite(state.vercel.pageviews))
-      ? state.vercel.pageviews
-      : null;
-    const pageviews = vercelPv != null ? vercelPv : clicks;
-    const pageviewsEstimated = vercelPv == null;
+    // Pageviews come from self-hosted /api/analytics. Fall back to clicks
+    // only if analytics isn't available yet (e.g. new deploy with no data).
+    const a = state.analytics || {};
+    const hasAnalytics = !a.error && a.pageviews && Number.isFinite(a.pageviews.total);
+    const pageviews = hasAnalytics ? a.pageviews.total : clicks;
+    const pageviewsEstimated = !hasAnalytics;
 
     const freeSubs = ml.subscribers?.freeInRange ?? 0;
     const paidSubs = ml.subscribers?.paidInRange ?? 0;
@@ -722,6 +795,111 @@
         </tbody>
       </table>
     `;
+  }
+
+  // ---------- Engagement ----------
+  function renderEngagement() {
+    const a = state.analytics || {};
+    const traffic = document.getElementById('engagementTraffic');
+    const scroll = document.getElementById('engagementScroll');
+    const formEl = document.getElementById('engagementForm');
+    const exit = document.getElementById('engagementExit');
+
+    if (a.error) {
+      const msg = `<div class="error">${escapeHtml(a.error)}</div>`;
+      traffic.innerHTML = scroll.innerHTML = formEl.innerHTML = exit.innerHTML = msg;
+      return;
+    }
+
+    const pv = a.pageviews || {};
+    const events = a.events || {};
+    const total = pv.total || 0;
+    const unique = pv.unique || 0;
+    const pvPerVisitor = unique > 0 ? (total / unique).toFixed(2) : '—';
+
+    traffic.innerHTML = `
+      <div class="stat-row"><span class="stat-row__label">Pageviews</span><span class="stat-row__value">${fmt.int(total)}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Unique visitors</span><span class="stat-row__value">${fmt.int(unique)}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Pageviews / visitor</span><span class="stat-row__value">${pvPerVisitor}</span></div>
+    `;
+
+    const sd = events.scroll_depth || {};
+    const sdMax = Math.max(sd[25] || 0, sd[50] || 0, sd[75] || 0, sd[100] || 0, 1);
+    const sdCol = d => `
+      <div class="mini-funnel__col">
+        <div class="mini-funnel__val">${fmt.int(sd[d] || 0)}</div>
+        <div class="mini-funnel__label">${d}%</div>
+        <div class="hbar-row__bar" style="margin-top:6px"><div class="hbar-row__fill" style="width:${((sd[d] || 0) / sdMax * 100).toFixed(1)}%"></div></div>
+      </div>
+    `;
+    scroll.innerHTML = `<div class="mini-funnel">${sdCol(25)}${sdCol(50)}${sdCol(75)}${sdCol(100)}</div>`;
+
+    const focus = events.form_focus || 0;
+    const success = events.form_submit_success || 0;
+    const error = events.form_submit_error || 0;
+    const convPct = focus > 0 ? (success / focus) * 100 : 0;
+    formEl.innerHTML = `
+      <div class="stat-row"><span class="stat-row__label">Form focus</span><span class="stat-row__value">${fmt.int(focus)}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Submit success</span><span class="stat-row__value">${fmt.int(success)}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Submit error</span><span class="stat-row__value">${fmt.int(error)}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Focus → Submit</span><span class="stat-row__value">${fmt.pct(convPct)}</span></div>
+    `;
+
+    const ei = events.exit_intent || { total: 0, byReason: {} };
+    const reasons = Object.entries(ei.byReason || {}).sort((a, b) => b[1] - a[1]);
+    const reasonRows = reasons.length
+      ? reasons.map(([k, v]) => `<div class="stat-row"><span class="stat-row__label">${escapeHtml(k)}</span><span class="stat-row__value">${fmt.int(v)}</span></div>`).join('')
+      : '<div class="empty" style="padding:12px">No exit events yet.</div>';
+    exit.innerHTML = `
+      <div class="stat-row"><span class="stat-row__label">Total exit events</span><span class="stat-row__value">${fmt.int(ei.total || 0)}</span></div>
+      ${reasonRows}
+    `;
+  }
+
+  // ---------- Audience ----------
+  function renderAudience() {
+    const a = state.analytics || {};
+    const countries = document.getElementById('audienceCountries');
+    const devices = document.getElementById('audienceDevices');
+    const referrers = document.getElementById('audienceReferrers');
+
+    if (a.error) {
+      const msg = `<div class="error">${escapeHtml(a.error)}</div>`;
+      countries.innerHTML = devices.innerHTML = referrers.innerHTML = msg;
+      return;
+    }
+
+    const b = a.breakdowns || {};
+
+    countries.innerHTML = renderHBarList(b.byCountry, 6, 'No country data yet.');
+
+    const dev = b.byDevice || {};
+    const devTotal = Object.values(dev).reduce((s, v) => s + v, 0);
+    if (devTotal === 0) {
+      devices.innerHTML = '<div class="empty" style="padding:12px">No device data yet.</div>';
+    } else {
+      const pct = k => devTotal > 0 ? ((dev[k] || 0) / devTotal) * 100 : 0;
+      devices.innerHTML = `
+        <div class="stat-row"><span class="stat-row__label">Mobile</span><span class="stat-row__value">${fmt.pct(pct('mobile'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.mobile || 0)})</span></span></div>
+        <div class="stat-row"><span class="stat-row__label">Desktop</span><span class="stat-row__value">${fmt.pct(pct('desktop'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.desktop || 0)})</span></span></div>
+        <div class="stat-row"><span class="stat-row__label">Tablet</span><span class="stat-row__value">${fmt.pct(pct('tablet'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.tablet || 0)})</span></span></div>
+      `;
+    }
+
+    referrers.innerHTML = renderHBarList(b.topReferrers, 6, 'No referrer data yet.');
+  }
+
+  function renderHBarList(dict, limit, emptyMsg) {
+    const entries = Object.entries(dict || {}).sort((a, b) => b[1] - a[1]).slice(0, limit);
+    if (!entries.length) return `<div class="empty" style="padding:12px">${emptyMsg}</div>`;
+    const max = entries[0][1] || 1;
+    return entries.map(([k, v]) => `
+      <div class="hbar-row">
+        <div class="hbar-row__label" title="${escapeHtml(k)}">${escapeHtml(k)}</div>
+        <div class="hbar-row__bar"><div class="hbar-row__fill" style="width:${((v / max) * 100).toFixed(1)}%"></div></div>
+        <div class="hbar-row__val">${fmt.int(v)}</div>
+      </div>
+    `).join('');
   }
 
   function escapeHtml(s) {

@@ -604,7 +604,6 @@ function wireMailerLiteForm(formId, thankYouId) {
       if (data.success) {
         form.style.display = 'none';
         thankYou.style.display = 'block';
-        // Track conversion in Vercel Analytics if enabled
         if (window.va) {
           window.va('event', {
             name: 'Email Signup',
@@ -615,6 +614,7 @@ function wireMailerLiteForm(formId, thankYouId) {
             }
           });
         }
+        if (window.trackEvent) window.trackEvent('form_submit_success', { form: formId });
       } else {
         throw new Error(data.message || 'Subscription failed');
       }
@@ -623,6 +623,7 @@ function wireMailerLiteForm(formId, thankYouId) {
         button.textContent = originalText;
         button.disabled = false;
       }
+      if (window.trackEvent) window.trackEvent('form_submit_error', { form: formId, reason: err.message });
       alert('Something went wrong. Please try again.');
     }
   });
@@ -634,6 +635,92 @@ function wireMailerLiteForm(formId, thankYouId) {
   } else {
     setTimeout(wireWhenReady, 50);
   }
+})();
+</script>
+<script>
+// Self-hosted analytics — posts to /api/track. Fails silently.
+(function () {
+  var urlParams = new URLSearchParams(window.location.search);
+  var baseData = {
+    path: window.location.pathname,
+    referrer: document.referrer || '',
+    utm_source: urlParams.get('utm_source') || '',
+    utm_medium: urlParams.get('utm_medium') || '',
+    utm_campaign: urlParams.get('utm_campaign') || '',
+    utm_content: urlParams.get('utm_content') || '',
+    utm_placement: urlParams.get('utm_placement') || '',
+  };
+
+  function track(event, metadata) {
+    try {
+      var payload = Object.assign({}, baseData, { event: event, metadata: metadata || {} });
+      fetch('/api/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (_) {}
+  }
+
+  window.trackEvent = track;
+
+  // Pageview
+  track('pageview');
+
+  // Scroll depth
+  var thresholds = [25, 50, 75, 100];
+  var fired = new Set();
+  function onScroll() {
+    var doc = document.documentElement;
+    var scrollTop = window.scrollY || doc.scrollTop || 0;
+    var viewport = window.innerHeight || doc.clientHeight || 0;
+    var full = doc.scrollHeight || document.body.scrollHeight || 1;
+    var pct = Math.min(100, Math.round(((scrollTop + viewport) / full) * 100));
+    thresholds.forEach(function (t) {
+      if (pct >= t && !fired.has(t)) {
+        fired.add(t);
+        track('scroll_depth', { depth: t });
+      }
+    });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+
+  // CTA clicks on submit buttons
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('button[type="submit"]');
+    if (!btn) return;
+    var form = btn.closest('form');
+    var loc = (form && form.id) || 'unknown';
+    track('cta_click', { cta_location: loc });
+  });
+
+  // Form focus (first focus only per input)
+  document.querySelectorAll('input[type="email"]').forEach(function (el) {
+    el.addEventListener('focus', function () {
+      var form = el.closest('form');
+      track('form_focus', { form: (form && form.id) || 'unknown' });
+    }, { once: true });
+  });
+
+  // Exit intent — desktop (mouseleave top) + mobile (visibilitychange/pagehide).
+  // 3s guard on visibility_hidden to avoid firing on every tab switch.
+  var exitFired = false;
+  var loadedAt = Date.now();
+  function fireExit(reason) {
+    if (exitFired) return;
+    exitFired = true;
+    track('exit_intent', { reason: reason });
+  }
+  document.addEventListener('mouseleave', function (e) {
+    if (e.clientY <= 0) fireExit('mouseleave_top');
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden' && Date.now() - loadedAt > 3000) {
+      fireExit('visibility_hidden');
+    }
+  });
+  window.addEventListener('pagehide', function () { fireExit('pagehide'); });
 })();
 </script>
 </body>

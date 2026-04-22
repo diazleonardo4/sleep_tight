@@ -1,6 +1,6 @@
 # Sleep Tight Dashboard
 
-Single-page metrics dashboard at `/dashboard` that pulls live data from Meta Ads and MailerLite. Password-protected, read-only, no external DB.
+Single-page metrics dashboard at `/dashboard` that pulls live data from Meta Ads, MailerLite, and self-hosted Redis analytics. Password-protected, read-only.
 
 ## Required environment variables
 
@@ -16,6 +16,7 @@ Set these in Vercel → Project Settings → Environment Variables (apply to Pro
 | `MAILERLITE_PAID_BUNDLE_GROUP_ID` | MailerLite → Subscribers → Groups → click the paid-bundle group → copy the ID from the URL. | Numeric string. |
 | `DASHBOARD_TIMEZONE` | IANA timezone name (e.g. `America/Bogota`). Defaults to `America/Bogota` if unset. | This is the canonical TZ for all "today / 7d / 30d" date math shown in the dashboard. |
 | `META_AD_ACCOUNT_TIMEZONE` | Meta Business Settings → Ad Accounts → your account → Time zone. IANA name (e.g. `America/Los_Angeles`). Defaults to `DASHBOARD_TIMEZONE` if unset. | Only needed when your ad account TZ differs from the dashboard TZ. Controls how the dashboard-TZ range is translated for Meta's API. |
+| `REDIS_URL` | Vercel → Storage → connect a Redis database (Upstash, Vercel KV, or similar). The URL is injected automatically. | Backs self-hosted pageview / engagement / audience analytics. Without it, `/api/track` and `/api/analytics` will fail and Pageviews falls back to Meta clicks. |
 
 After adding or changing env vars, redeploy (Vercel → Deployments → ⋯ → Redeploy) so the serverless functions pick them up.
 
@@ -60,13 +61,18 @@ These are not secrets — rotating them means pointing the dashboard at differen
 - All `/api/*` endpoints require the `x-auth-token` header to match `DASHBOARD_PASSWORD`. There is no other auth layer — treat the password as the only gate.
 - Tokens are never logged. The serverless functions hold them only in `process.env`.
 - If you suspect the password has been shared, rotate it immediately (steps above). The old sessions become unusable on the next API call.
-- Vercel Web Analytics has no public API, so that card shows a link back to the Vercel dashboard rather than embedded numbers.
+- `/api/track` is the only public endpoint. It's IP rate-limited to 60 req/min and fails open so tracking issues never break the site for real users.
+- All other `/api/*` endpoints require the `x-auth-token` header to match `DASHBOARD_PASSWORD`.
 
 ## Files
 
-- `public/dashboard.html` — the UI.
+- `dashboard.html` — the UI.
 - `api/auth.js` — password check, returns the auth token.
-- `api/meta.js` — Meta Ads insights (today, last 7 days, per-ad, per-placement).
+- `api/config.js` — exposes the dashboard timezone to the client.
+- `api/meta.js` — Meta Ads insights (today / last 7 days / last 30 days, per-ad, per-placement).
 - `api/mailerlite.js` — subscriber counts + UTM breakdowns for free and paid groups.
-- `api/vercel-analytics.js` — stub returning an "unavailable" notice.
-- `vercel.json` — rewrites `/dashboard` to `/public/dashboard.html`.
+- `api/track.js` — public event ingestion. Writes pageviews, CTA clicks, scroll depth, form events, and exit intent to Redis.
+- `api/analytics.js` — aggregates Redis events into pageviews, uniques, scroll funnel, form funnel, exit intent, and country / device / referrer breakdowns.
+- `api/_utils/dates.js` — shared date/timezone helpers. All date bucketing goes through here — never use `toISOString().slice(0, 10)` elsewhere.
+- `lib/redis.js` — shared ioredis singleton (reused across warm invocations).
+- `vercel.json` — rewrites `/dashboard` to `/dashboard.html`.

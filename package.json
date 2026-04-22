@@ -1,0 +1,8 @@
+{
+  "name": "sleep-tight-webpage",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "ioredis": "^5.4.1"
+  }
+}
