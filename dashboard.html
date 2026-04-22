@@ -6,12 +6,15 @@
 <title>Sleep Tight — Control Center</title>
 <!--
   Required env vars (set in Vercel → Project → Settings → Environment Variables):
-    DASHBOARD_PASSWORD              Any strong password
-    META_ACCESS_TOKEN               Meta system user token (ads_read scope)
-    META_AD_ACCOUNT_ID              act_XXXXXXXXX format
-    MAILERLITE_API_TOKEN            MailerLite → Settings → Integrations → API
-    MAILERLITE_FREE_EBOOK_GROUP_ID  ID of "Free Ebook Downloads" group
-    MAILERLITE_PAID_BUNDLE_GROUP_ID ID of "Paid Bundle Buyers" group
+    DASHBOARD_PASSWORD               Any strong password
+    META_ACCESS_TOKEN                Meta system user token (ads_read scope)
+    META_AD_ACCOUNT_ID               act_XXXXXXXXX format
+    MAILERLITE_API_TOKEN             MailerLite → Settings → Integrations → API
+    MAILERLITE_FREE_EBOOK_GROUP_ID   ID of "Free Ebook Downloads" group
+    MAILERLITE_PAID_BUNDLE_GROUP_ID  ID of "Paid Bundle Buyers" group
+  Optional (enables Layer 3c — Email engagement panel):
+    MAILERLITE_EMAIL_1_CAMPAIGN_ID   Welcome email campaign ID
+    MAILERLITE_EMAIL_3_CAMPAIGN_ID   Pitch email campaign ID
 
   Access: https://<your-domain>/dashboard
 -->
@@ -30,8 +33,11 @@
     --text-faint: #8a9ab5;
     --border: #e2e8f0;
     --green: #2e8a4e;
+    --green-soft: #e4f2ea;
     --yellow: #d4a843;
+    --yellow-soft: #fdf0cc;
     --red: #c8344a;
+    --red-soft: #fde0e4;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -122,7 +128,12 @@
   .card {
     background: #fff; border-radius: 14px; padding: 20px 22px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+    border-left: 4px solid transparent;
+    transition: border-color 0.2s;
   }
+  .card.is-green  { border-left-color: var(--green); background: linear-gradient(to right, var(--green-soft) 0%, #fff 40%); }
+  .card.is-yellow { border-left-color: var(--yellow); background: linear-gradient(to right, var(--yellow-soft) 0%, #fff 40%); }
+  .card.is-red    { border-left-color: var(--red); background: linear-gradient(to right, var(--red-soft) 0%, #fff 40%); }
   .card__label {
     font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
     letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold);
@@ -141,9 +152,9 @@
     background: #fff; border-radius: 14px; padding: 24px 24px 20px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     grid-template-rows: auto 180px auto auto;
-    column-gap: 16px;
+    column-gap: 14px;
     row-gap: 0;
   }
   .funnel > .empty, .funnel > .error { grid-column: 1 / -1; }
@@ -174,7 +185,7 @@
   }
   .funnel__label {
     font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 12px;
-    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold);
     margin-top: 12px; padding-top: 8px;
     border-top: 1px solid var(--border);
     text-align: center;
@@ -213,11 +224,21 @@
     border-bottom: 1px solid var(--border);
   }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.status, th.status { text-align: center; }
   tbody tr { border-top: 1px solid var(--border); }
   tbody tr:first-child { border-top: none; }
-  tbody tr.is-winner { background: var(--gold-soft); }
-  tbody tr.is-winner td:first-child { position: relative; padding-left: 26px; font-weight: 600; }
-  tbody tr.is-winner td:first-child::before { content: '★'; position: absolute; left: 10px; color: var(--gold); }
+
+  /* Status pills */
+  .pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 9px; border-radius: 999px;
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  .pill--scale   { background: var(--green-soft); color: var(--green); }
+  .pill--monitor { background: var(--yellow-soft); color: #8a6b1a; }
+  .pill--kill    { background: var(--red-soft); color: var(--red); }
 
   .error {
     background: #ffeaea; color: var(--red); padding: 14px 18px;
@@ -225,16 +246,15 @@
   }
   .empty { color: var(--text-muted); font-size: 14px; padding: 28px; text-align: center; }
 
-  /* ---------- ENGAGEMENT / AUDIENCE ---------- */
+  /* ---------- EMAIL PANEL ---------- */
   .panel {
     background: #fff; border-radius: 14px; padding: 20px 22px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
   }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  @media (max-width: 900px) {
-    .grid-2, .grid-3 { grid-template-columns: 1fr; }
-  }
+  .email-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .email-grid { grid-template-columns: 1fr; } }
+  .email-panel__subject { font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 14px; color: var(--navy); margin-bottom: 4px; }
+  .email-panel__sent { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
   .stat-row {
     display: flex; justify-content: space-between; align-items: baseline;
     padding: 10px 0; border-bottom: 1px dashed var(--border);
@@ -247,23 +267,16 @@
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--navy);
     margin-bottom: 12px;
   }
-  .hbar-row {
-    display: grid; grid-template-columns: 90px 1fr 60px;
-    gap: 10px; align-items: center; padding: 6px 0; font-size: 13px;
-  }
-  .hbar-row__label { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .hbar-row__bar { background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; }
-  .hbar-row__fill { background: var(--navy); height: 100%; }
-  .hbar-row__val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-  .mini-funnel { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .mini-funnel__col { text-align: center; }
-  .mini-funnel__val { font-size: 22px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
-  .mini-funnel__label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-top: 4px; }
 
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
-    .funnel { gap: 10px; padding: 20px 16px 16px; }
+    .funnel {
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: auto 140px auto auto auto 140px auto auto;
+      column-gap: 10px;
+      padding: 20px 16px 16px;
+    }
     .funnel__number { font-size: 20px; }
   }
   @media (max-width: 640px) {
@@ -271,18 +284,16 @@
     .cards { grid-template-columns: 1fr; }
     .header h1 { font-size: 22px; }
     .card__value { font-size: 32px; }
-    .funnel { gap: 6px; padding: 18px 10px 14px; }
+    .funnel {
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(3, auto 120px auto auto);
+      column-gap: 8px;
+      padding: 18px 10px 14px;
+    }
     .funnel__number { font-size: 18px; }
-    .funnel__bar-wrap { height: 130px; }
     .funnel__label { font-size: 10px; letter-spacing: 0.1em; margin-top: 8px; padding-top: 6px; }
     .funnel__rate { font-size: 10px; gap: 4px; }
     th, td { padding: 10px 12px; font-size: 13px; }
-  }
-  @media (max-width: 360px) {
-    .funnel { gap: 4px; padding: 16px 6px 12px; }
-    .funnel__number { font-size: 15px; }
-    .funnel__label { letter-spacing: 0.06em; }
-    .funnel__bar-wrap { width: 90%; }
   }
 </style>
 </head>
@@ -322,34 +333,34 @@
     <button class="range__btn" data-range="30d" type="button">Last 30 days</button>
   </div>
 
-  <!-- METRICS ROW -->
+  <!-- LAYER 1 — HEALTH -->
   <div class="section">
     <div class="section__head"><h2 id="metricsTitle">Last 7 days</h2></div>
     <div class="cards">
-      <div class="card">
-        <div class="card__label">Ad Spend</div>
+      <div class="card" data-card="spend">
+        <div class="card__label">Spend</div>
         <div class="card__value is-skeleton" data-metric="spend">—</div>
         <div class="card__sub" data-metric="spend-sub"></div>
       </div>
-      <div class="card">
-        <div class="card__label">New Subscribers</div>
-        <div class="card__value is-skeleton" data-metric="subs">—</div>
-        <div class="card__sub" data-metric="subs-sub">free ebook</div>
+      <div class="card" data-card="free-subs">
+        <div class="card__label">Free Subs</div>
+        <div class="card__value is-skeleton" data-metric="free-subs">—</div>
+        <div class="card__sub" data-metric="free-subs-sub">new in range</div>
       </div>
-      <div class="card">
-        <div class="card__label">Cost / Subscriber</div>
-        <div class="card__value is-skeleton" data-metric="cps">—</div>
-        <div class="card__sub" data-metric="cps-sub">spend / new subs</div>
+      <div class="card" data-card="cost-free">
+        <div class="card__label">Cost / Free Sub</div>
+        <div class="card__value is-skeleton" data-metric="cost-free">—</div>
+        <div class="card__sub" data-metric="cost-free-sub">benchmark &lt; $2</div>
       </div>
-      <div class="card">
-        <div class="card__label">Paid Bundle Total</div>
-        <div class="card__value is-skeleton" data-metric="paid-total">—</div>
-        <div class="card__sub" data-metric="paid-total-sub">all-time buyers</div>
+      <div class="card" data-card="cost-paid">
+        <div class="card__label">Cost / Paid</div>
+        <div class="card__value is-skeleton" data-metric="cost-paid">—</div>
+        <div class="card__sub" data-metric="cost-paid-sub">benchmark &lt; $30</div>
       </div>
     </div>
   </div>
 
-  <!-- FUNNEL -->
+  <!-- LAYER 2 — FUNNEL -->
   <div class="section">
     <div class="section__head">
       <h2>Acquisition funnel</h2>
@@ -360,74 +371,35 @@
     </div>
   </div>
 
-  <!-- WINNING AD -->
+  <!-- LAYER 3a — WINNING AD -->
   <div class="section">
     <div class="section__head">
       <h2>Which ad is winning?</h2>
-      <span class="eyebrow" id="adTableRangeLabel">ranked by $ / subscriber · last 7 days</span>
+      <span class="eyebrow" id="adTableRangeLabel">sorted by $ / sub · last 7 days</span>
     </div>
     <div class="table-wrap" id="adTableWrap">
       <div class="empty">Loading…</div>
     </div>
   </div>
 
-  <!-- WINNING PLACEMENT -->
+  <!-- LAYER 3b — WINNING PLACEMENT -->
   <div class="section">
     <div class="section__head">
       <h2>Which placement is winning?</h2>
-      <span class="eyebrow" id="placementTableRangeLabel">ranked by $ / subscriber · last 7 days</span>
+      <span class="eyebrow" id="placementTableRangeLabel">sorted by $ / sub · last 7 days</span>
     </div>
     <div class="table-wrap" id="placementTableWrap">
       <div class="empty">Loading…</div>
     </div>
   </div>
 
-  <!-- ENGAGEMENT -->
+  <!-- LAYER 3c — EMAIL ENGAGEMENT -->
   <div class="section">
     <div class="section__head">
-      <h2>Engagement</h2>
-      <span class="eyebrow" id="engagementRangeLabel">last 7 days</span>
+      <h2>Email engagement</h2>
+      <span class="eyebrow">all-time campaign stats</span>
     </div>
-    <div class="grid-2">
-      <div class="panel">
-        <div class="panel__title">Traffic</div>
-        <div id="engagementTraffic"><div class="empty">Loading…</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel__title">Scroll depth</div>
-        <div id="engagementScroll"><div class="empty">Loading…</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel__title">Form funnel</div>
-        <div id="engagementForm"><div class="empty">Loading…</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel__title">Exit intent</div>
-        <div id="engagementExit"><div class="empty">Loading…</div></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- AUDIENCE -->
-  <div class="section">
-    <div class="section__head">
-      <h2>Audience</h2>
-      <span class="eyebrow" id="audienceRangeLabel">last 7 days</span>
-    </div>
-    <div class="grid-3">
-      <div class="panel">
-        <div class="panel__title">Top countries</div>
-        <div id="audienceCountries"><div class="empty">Loading…</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel__title">Device</div>
-        <div id="audienceDevices"><div class="empty">Loading…</div></div>
-      </div>
-      <div class="panel">
-        <div class="panel__title">Top referrers</div>
-        <div id="audienceReferrers"><div class="empty">Loading…</div></div>
-      </div>
-    </div>
+    <div id="emailPanel"><div class="empty">Loading…</div></div>
   </div>
 </div>
 
@@ -438,15 +410,22 @@
   const RANGE_LABELS = { today: 'today', '7d': 'last 7 days', '30d': 'last 30 days' };
   const RANGE_TITLES = { today: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 
-  // Benchmarks for health/wellness niche (2026)
+  // Benchmarks for health/wellness niche (2026).
+  // Funnel rates are percentages; cost benchmarks are USD.
   const BENCH = {
-    ctr: 2.7,          // clicks / impressions × 100
-    landing: 90,       // pageviews / clicks × 100
-    signup: 25,        // subs / pageviews × 100
-    purchase: 3,       // paid / free × 100
+    ctr: 2.7,              // clicks / impressions × 100
+    landing: 90,           // pageviews / clicks × 100
+    engagement: 40,        // engaged visitors / pageviews × 100
+    signup: 25,            // free subs / pageviews × 100
+    purchase: 3,           // paid subs / free subs × 100
+    costPerFree: 2,        // $ / free sub
+    costPerPaid: 30,       // $ / paid sub
   };
+  // Scale/Kill thresholds for the ad & placement tables.
+  const WINNER_MIN_SUBS = 5;
+  const KILL_MIN_CLICKS = 10;
 
-  const state = { meta: null, mailerlite: null, analytics: null, config: null, range: getInitialRange() };
+  const state = { meta: null, mailerlite: null, analytics: null, email: null, config: null, range: getInitialRange() };
 
   function getInitialRange() {
     const urlRange = new URLSearchParams(location.search).get('range');
@@ -473,10 +452,8 @@
     });
     document.getElementById('metricsTitle').textContent = RANGE_TITLES[state.range];
     document.getElementById('funnelRangeLabel').textContent = RANGE_LABELS[state.range];
-    document.getElementById('engagementRangeLabel').textContent = RANGE_LABELS[state.range];
-    document.getElementById('audienceRangeLabel').textContent = RANGE_LABELS[state.range];
-    document.getElementById('adTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
-    document.getElementById('placementTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
+    document.getElementById('adTableRangeLabel').textContent = `sorted by $ / sub · ${RANGE_LABELS[state.range]}`;
+    document.getElementById('placementTableRangeLabel').textContent = `sorted by $ / sub · ${RANGE_LABELS[state.range]}`;
   }
 
   // ---------- Login ----------
@@ -535,14 +512,15 @@
 
     const r = encodeURIComponent(state.range);
     const configPromise = state.config ? Promise.resolve({ status: 'fulfilled', value: state.config }) : null;
-    const [meta, ml, analytics, config] = await Promise.allSettled([
+    const [meta, ml, analytics, email, config] = await Promise.allSettled([
       fetchJson(`/api/meta?range=${r}`),
       fetchJson(`/api/mailerlite?range=${r}`),
       fetchJson(`/api/analytics?range=${r}`),
+      fetchJson('/api/email-stats'),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
     ]);
 
-    for (const res of [meta, ml, analytics, config]) {
+    for (const res of [meta, ml, analytics, email, config]) {
       if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
@@ -553,6 +531,7 @@
     state.meta = meta.status === 'fulfilled' ? meta.value : { error: meta.reason?.message || 'Meta data unavailable' };
     state.mailerlite = ml.status === 'fulfilled' ? ml.value : { error: ml.reason?.message || 'MailerLite data unavailable' };
     state.analytics = analytics.status === 'fulfilled' ? analytics.value : { error: analytics.reason?.message || 'Analytics unavailable' };
+    state.email = email.status === 'fulfilled' ? email.value : { available: false, reason: email.reason?.message || 'Email stats unavailable' };
     if (config.status === 'fulfilled' && config.value) state.config = config.value;
 
     render();
@@ -579,13 +558,30 @@
     int: n => Number.isFinite(+n) ? Math.round(+n).toLocaleString() : '—',
   };
 
-  function setCard(key, value, sub, isError) {
+  // Color class for a cost metric against its benchmark.
+  // green < bench, yellow < 1.5×bench, red ≥ 1.5×bench.
+  // Returns '' when value isn't a finite number (unknown → no color).
+  function costClass(value, bench) {
+    if (!Number.isFinite(value) || value < 0) return '';
+    if (value < bench) return 'is-green';
+    if (value < bench * 1.5) return 'is-yellow';
+    return 'is-red';
+  }
+
+  function setCard(key, value, sub, opts) {
     const el = document.querySelector(`[data-metric="${key}"]`);
     if (el) { el.textContent = value; el.classList.remove('is-skeleton'); }
     const subEl = document.querySelector(`[data-metric="${key}-sub"]`);
     if (subEl && sub != null) {
       subEl.textContent = sub;
-      subEl.classList.toggle('is-error', !!isError);
+      subEl.classList.toggle('is-error', !!(opts && opts.isError));
+    }
+    if (opts && opts.card) {
+      const cardEl = document.querySelector(`[data-card="${opts.card}"]`);
+      if (cardEl) {
+        cardEl.classList.remove('is-green', 'is-yellow', 'is-red');
+        if (opts.color) cardEl.classList.add(opts.color);
+      }
     }
   }
 
@@ -597,29 +593,46 @@
 
     const spend = summary.spend;
     const clicks = summary.clicks ?? 0;
-    const subs = ml.subscribers?.freeInRange;
-    const cps = (Number.isFinite(spend) && subs > 0) ? spend / subs : null;
+    const impressions = summary.impressions ?? 0;
+    const freeSubs = ml.subscribers?.freeInRange;
+    const paidSubs = ml.subscribers?.paidInRange;
 
+    // Spend card — no benchmark, always neutral.
     if (m.error) {
-      setCard('spend', '—', m.error, true);
+      setCard('spend', '—', m.error, { isError: true, card: 'spend' });
     } else {
-      setCard('spend', fmt.money(spend), `${fmt.int(clicks)} clicks · ${fmt.int(summary.impressions ?? 0)} impr.`);
+      setCard('spend', fmt.money(spend), `${fmt.int(clicks)} clicks · ${fmt.int(impressions)} impr.`, { card: 'spend' });
     }
 
+    // Free subs — no benchmark.
     if (ml.error) {
-      setCard('subs', '—', ml.error, true);
+      setCard('free-subs', '—', ml.error, { isError: true, card: 'free-subs' });
     } else {
-      setCard('subs', fmt.int(subs), 'free ebook · new in range');
+      setCard('free-subs', fmt.int(freeSubs), 'new in range', { card: 'free-subs' });
     }
 
-    setCard('cps', cps != null ? fmt.money(cps) : '—', 'spend / new subs');
-    setCard('paid-total', ml.error ? '—' : fmt.int(ml.subscribers?.paid ?? 0), 'all-time buyers');
+    // Cost / Free Sub — green <$2, yellow <$3, red ≥$3. "—" when denom is 0.
+    const cpFree = (Number.isFinite(spend) && freeSubs > 0) ? spend / freeSubs : null;
+    setCard(
+      'cost-free',
+      cpFree != null ? fmt.money(cpFree) : '—',
+      `benchmark < ${fmt.money(BENCH.costPerFree)}`,
+      { card: 'cost-free', color: costClass(cpFree, BENCH.costPerFree) }
+    );
+
+    // Cost / Paid — green <$30, yellow <$45, red ≥$45. "—" when no paid subs.
+    const cpPaid = (Number.isFinite(spend) && paidSubs > 0) ? spend / paidSubs : null;
+    setCard(
+      'cost-paid',
+      cpPaid != null ? fmt.money(cpPaid) : '—',
+      `benchmark < ${fmt.money(BENCH.costPerPaid)}`,
+      { card: 'cost-paid', color: costClass(cpPaid, BENCH.costPerPaid) }
+    );
 
     renderFunnel();
     renderAdTable();
     renderPlacementTable();
-    renderEngagement();
-    renderAudience();
+    renderEmailPanel();
   }
 
   // ---------- Funnel ----------
@@ -642,7 +655,11 @@
     const a = state.analytics || {};
     const hasAnalytics = !a.error && a.pageviews && Number.isFinite(a.pageviews.total);
     const pageviews = hasAnalytics ? a.pageviews.total : clicks;
+    const uniqueVisitors = hasAnalytics ? (a.pageviews.unique || 0) : null;
     const pageviewsEstimated = !hasAnalytics;
+
+    // Engaged = distinct visitor_ids with BOTH pageview AND scroll_depth>=50.
+    const engaged = hasAnalytics ? (a.visitors?.engaged_visitors ?? 0) : 0;
 
     const freeSubs = ml.subscribers?.freeInRange ?? 0;
     const paidSubs = ml.subscribers?.paidInRange ?? 0;
@@ -652,19 +669,23 @@
       { label: 'Clicks',      value: clicks,
         rate: { label: 'CTR', pct: impressions > 0 ? (clicks / impressions) * 100 : 0, bench: BENCH.ctr } },
       { label: 'Pageviews',   value: pageviews,
-        tag: pageviewsEstimated ? '(estimated)' : null,
-        rate: { label: 'Landing rate', pct: clicks > 0 ? (pageviews / clicks) * 100 : 0, bench: BENCH.landing } },
-      { label: 'Subs',        value: freeSubs,
-        rate: { label: 'Signup rate', pct: pageviews > 0 ? (freeSubs / pageviews) * 100 : 0, bench: BENCH.signup } },
+        tag: pageviewsEstimated
+          ? '(estimated)'
+          : (uniqueVisitors != null ? `${fmt.int(uniqueVisitors)} unique` : null),
+        rate: { label: 'Landing', pct: clicks > 0 ? (pageviews / clicks) * 100 : 0, bench: BENCH.landing } },
+      { label: 'Engaged',     value: engaged,
+        tag: hasAnalytics ? 'scroll ≥ 50%' : null,
+        rate: { label: 'Engagement', pct: pageviews > 0 ? (engaged / pageviews) * 100 : 0, bench: BENCH.engagement } },
+      { label: 'Submits',     value: freeSubs,
+        rate: { label: 'Submit', pct: pageviews > 0 ? (freeSubs / pageviews) * 100 : 0, bench: BENCH.signup } },
       { label: 'Paid',        value: paidSubs,
-        rate: { label: 'Purchase rate', pct: freeSubs > 0 ? (paidSubs / freeSubs) * 100 : 0, bench: BENCH.purchase } },
+        rate: { label: 'Purchase', pct: freeSubs > 0 ? (paidSubs / freeSubs) * 100 : 0, bench: BENCH.purchase } },
     ];
 
     const top = Math.max(impressions, 1);
 
-    // Flat grid: row 1 = numbers, row 2 = bars, row 3 = labels, row 4 = rates.
-    // This keeps every column's baselines aligned even when the Pageviews
-    // "(estimated)" tag adds extra height to that number cell.
+    // Flat grid layout: numbers → bars → labels → rates, rows 1–4.
+    // Keeps every column's baselines aligned even with variable-height tags.
     const numbers = stages.map(stage => {
       const tagHtml = stage.tag ? `<span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
       return `<div class="funnel__number">${fmt.int(stage.value)}${tagHtml}</div>`;
@@ -715,6 +736,52 @@
     return `rgb(${mix.join(',')})`;
   }
 
+  // Status = decision label for a single ad/placement row.
+  // 🟢 Scale — cost/sub < benchmark AND subs >= WINNER_MIN_SUBS
+  // 🔴 Kill  — cost/sub > 1.5× benchmark AND clicks >= KILL_MIN_CLICKS
+  // 🟡 Monitor — otherwise (or when cost/sub can't be computed)
+  function statusFor(cps, subs, clicks) {
+    if (Number.isFinite(cps) && cps < BENCH.costPerFree && subs >= WINNER_MIN_SUBS) {
+      return { cls: 'pill--scale', label: '🟢 Scale' };
+    }
+    if ((!Number.isFinite(cps) || cps > BENCH.costPerFree * 1.5) && clicks >= KILL_MIN_CLICKS) {
+      return { cls: 'pill--kill', label: '🔴 Kill' };
+    }
+    return { cls: 'pill--monitor', label: '🟡 Monitor' };
+  }
+
+  function winnerTable(rows, firstColHeader, firstColField) {
+    return `
+      <table>
+        <thead><tr>
+          <th>${escapeHtml(firstColHeader)}</th>
+          <th class="num">Clicks</th>
+          <th class="num">CTR</th>
+          <th class="num">Spend</th>
+          <th class="num">Subs</th>
+          <th class="num">$ / Sub</th>
+          <th class="status">Status</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(r => {
+            const s = statusFor(r.cps, r.subs, r.clicks);
+            return `
+              <tr>
+                <td>${escapeHtml(r[firstColField])}</td>
+                <td class="num">${fmt.int(r.clicks)}</td>
+                <td class="num">${fmt.pct(r.ctr)}</td>
+                <td class="num">${fmt.money(r.spend)}</td>
+                <td class="num">${fmt.int(r.subs)}</td>
+                <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
+                <td class="status"><span class="pill ${s.cls}">${s.label}</span></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
   function renderAdTable() {
     const wrap = document.getElementById('adTableWrap');
     const m = state.meta || {};
@@ -726,34 +793,10 @@
       const cps = subs > 0 ? ad.spend / subs : Infinity;
       return { ...ad, subs, cps };
     });
+    // Ascending cost/sub: winners first, Infinity (no subs) last.
     rows.sort((a, b) => a.cps - b.cps);
     if (!rows.length) { wrap.innerHTML = `<div class="empty">No ad data yet for ${RANGE_LABELS[state.range]}.</div>`; return; }
-    const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
-
-    wrap.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>Ad</th>
-          <th class="num">Clicks</th>
-          <th class="num">CTR</th>
-          <th class="num">Spend</th>
-          <th class="num">Subs</th>
-          <th class="num">$ / Sub</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map((r, i) => `
-            <tr class="${i === winnerIdx ? 'is-winner' : ''}">
-              <td>${escapeHtml(r.name)}</td>
-              <td class="num">${fmt.int(r.clicks)}</td>
-              <td class="num">${fmt.pct(r.ctr)}</td>
-              <td class="num">${fmt.money(r.spend)}</td>
-              <td class="num">${fmt.int(r.subs)}</td>
-              <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `;
+    wrap.innerHTML = winnerTable(rows, 'Ad', 'name');
   }
 
   function renderPlacementTable() {
@@ -769,147 +812,52 @@
     });
     rows.sort((a, b) => a.cps - b.cps);
     if (!rows.length) { wrap.innerHTML = `<div class="empty">No placement data yet for ${RANGE_LABELS[state.range]}.</div>`; return; }
-    const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
+    wrap.innerHTML = winnerTable(rows, 'Placement', 'placement');
+  }
+
+  // ---------- Email panel ----------
+  function renderEmailPanel() {
+    const wrap = document.getElementById('emailPanel');
+    const e = state.email || {};
+
+    if (e.error) {
+      wrap.innerHTML = `<div class="error">${escapeHtml(e.error)}</div>`;
+      return;
+    }
+    if (!e.available) {
+      wrap.innerHTML = `<div class="panel"><div class="empty" style="padding:12px">Email stats not configured. ${escapeHtml(e.reason || '')}</div></div>`;
+      return;
+    }
 
     wrap.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>Placement</th>
-          <th class="num">Clicks</th>
-          <th class="num">CTR</th>
-          <th class="num">Spend</th>
-          <th class="num">Subs</th>
-          <th class="num">$ / Sub</th>
-        </tr></thead>
-        <tbody>
-          ${rows.map((r, i) => `
-            <tr class="${i === winnerIdx ? 'is-winner' : ''}">
-              <td>${escapeHtml(r.placement)}</td>
-              <td class="num">${fmt.int(r.clicks)}</td>
-              <td class="num">${fmt.pct(r.ctr)}</td>
-              <td class="num">${fmt.money(r.spend)}</td>
-              <td class="num">${fmt.int(r.subs)}</td>
-              <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `;
-  }
-
-  // ---------- Engagement ----------
-  function renderEngagement() {
-    const a = state.analytics || {};
-    const traffic = document.getElementById('engagementTraffic');
-    const scroll = document.getElementById('engagementScroll');
-    const formEl = document.getElementById('engagementForm');
-    const exit = document.getElementById('engagementExit');
-
-    if (a.error) {
-      const msg = `<div class="error">${escapeHtml(a.error)}</div>`;
-      traffic.innerHTML = scroll.innerHTML = formEl.innerHTML = exit.innerHTML = msg;
-      return;
-    }
-
-    const pv = a.pageviews || {};
-    const events = a.events || {};
-    const v = a.visitors || {};
-    const total = pv.total || 0;
-    const unique = pv.unique || 0;
-    const pvPerVisitor = unique > 0 ? (total / unique).toFixed(2) : '—';
-
-    const scanned = v.scanned_visitors || 0;
-    const returning = v.returning_visitors || 0;
-    const bounces = v.single_pageview_bounces || 0;
-    const returningPct = scanned > 0 ? (returning / scanned) * 100 : 0;
-    const bouncePct = scanned > 0 ? (bounces / scanned) * 100 : 0;
-
-    traffic.innerHTML = `
-      <div class="stat-row"><span class="stat-row__label">Pageviews</span><span class="stat-row__value">${fmt.int(total)}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Unique visitors</span><span class="stat-row__value">${fmt.int(unique)}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Pageviews / visitor</span><span class="stat-row__value">${pvPerVisitor}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Avg events / visitor</span><span class="stat-row__value">${v.avg_events_per_visitor ?? '—'}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Returning visitors</span><span class="stat-row__value">${fmt.int(returning)} / ${fmt.int(scanned)} <span style="color:var(--text-muted);font-weight:400">(${returningPct.toFixed(0)}%)</span></span></div>
-      <div class="stat-row"><span class="stat-row__label">Bounce (pageview only)</span><span class="stat-row__value">${fmt.int(bounces)} / ${fmt.int(scanned)} <span style="color:var(--text-muted);font-weight:400">(${bouncePct.toFixed(0)}%)</span></span></div>
-    `;
-
-    const sd = events.scroll_depth || {};
-    const sdMax = Math.max(sd[25] || 0, sd[50] || 0, sd[75] || 0, sd[100] || 0, 1);
-    const sdCol = d => `
-      <div class="mini-funnel__col">
-        <div class="mini-funnel__val">${fmt.int(sd[d] || 0)}</div>
-        <div class="mini-funnel__label">${d}%</div>
-        <div class="hbar-row__bar" style="margin-top:6px"><div class="hbar-row__fill" style="width:${((sd[d] || 0) / sdMax * 100).toFixed(1)}%"></div></div>
+      <div class="email-grid">
+        ${emailCard('Email 1 — Welcome', e.email1)}
+        ${emailCard('Email 3 — Pitch', e.email3)}
       </div>
     `;
-    scroll.innerHTML = `<div class="mini-funnel">${sdCol(25)}${sdCol(50)}${sdCol(75)}${sdCol(100)}</div>`;
-
-    const focus = events.form_focus || 0;
-    const success = events.form_submit_success || 0;
-    const error = events.form_submit_error || 0;
-    const convPct = focus > 0 ? (success / focus) * 100 : 0;
-    formEl.innerHTML = `
-      <div class="stat-row"><span class="stat-row__label">Form focus</span><span class="stat-row__value">${fmt.int(focus)}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Submit success</span><span class="stat-row__value">${fmt.int(success)}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Submit error</span><span class="stat-row__value">${fmt.int(error)}</span></div>
-      <div class="stat-row"><span class="stat-row__label">Focus → Submit</span><span class="stat-row__value">${fmt.pct(convPct)}</span></div>
-    `;
-
-    const ei = events.exit_intent || { total: 0, byReason: {} };
-    const reasons = Object.entries(ei.byReason || {}).sort((a, b) => b[1] - a[1]);
-    const reasonRows = reasons.length
-      ? reasons.map(([k, v]) => `<div class="stat-row"><span class="stat-row__label">${escapeHtml(k)}</span><span class="stat-row__value">${fmt.int(v)}</span></div>`).join('')
-      : '<div class="empty" style="padding:12px">No exit events yet.</div>';
-    exit.innerHTML = `
-      <div class="stat-row"><span class="stat-row__label">Total exit events</span><span class="stat-row__value">${fmt.int(ei.total || 0)}</span></div>
-      ${reasonRows}
-    `;
   }
 
-  // ---------- Audience ----------
-  function renderAudience() {
-    const a = state.analytics || {};
-    const countries = document.getElementById('audienceCountries');
-    const devices = document.getElementById('audienceDevices');
-    const referrers = document.getElementById('audienceReferrers');
-
-    if (a.error) {
-      const msg = `<div class="error">${escapeHtml(a.error)}</div>`;
-      countries.innerHTML = devices.innerHTML = referrers.innerHTML = msg;
-      return;
-    }
-
-    const b = a.breakdowns || {};
-
-    countries.innerHTML = renderHBarList(b.byCountry, 6, 'No country data yet.');
-
-    const dev = b.byDevice || {};
-    const devTotal = Object.values(dev).reduce((s, v) => s + v, 0);
-    if (devTotal === 0) {
-      devices.innerHTML = '<div class="empty" style="padding:12px">No device data yet.</div>';
-    } else {
-      const pct = k => devTotal > 0 ? ((dev[k] || 0) / devTotal) * 100 : 0;
-      devices.innerHTML = `
-        <div class="stat-row"><span class="stat-row__label">Mobile</span><span class="stat-row__value">${fmt.pct(pct('mobile'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.mobile || 0)})</span></span></div>
-        <div class="stat-row"><span class="stat-row__label">Desktop</span><span class="stat-row__value">${fmt.pct(pct('desktop'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.desktop || 0)})</span></span></div>
-        <div class="stat-row"><span class="stat-row__label">Tablet</span><span class="stat-row__value">${fmt.pct(pct('tablet'))} <span style="color:var(--text-muted);font-weight:400">(${fmt.int(dev.tablet || 0)})</span></span></div>
-      `;
-    }
-
-    referrers.innerHTML = renderHBarList(b.topReferrers, 6, 'No referrer data yet.');
-  }
-
-  function renderHBarList(dict, limit, emptyMsg) {
-    const entries = Object.entries(dict || {}).sort((a, b) => b[1] - a[1]).slice(0, limit);
-    if (!entries.length) return `<div class="empty" style="padding:12px">${emptyMsg}</div>`;
-    const max = entries[0][1] || 1;
-    return entries.map(([k, v]) => `
-      <div class="hbar-row">
-        <div class="hbar-row__label" title="${escapeHtml(k)}">${escapeHtml(k)}</div>
-        <div class="hbar-row__bar"><div class="hbar-row__fill" style="width:${((v / max) * 100).toFixed(1)}%"></div></div>
-        <div class="hbar-row__val">${fmt.int(v)}</div>
+  function emailCard(title, c) {
+    c = c || {};
+    return `
+      <div class="panel">
+        <div class="panel__title">${escapeHtml(title)}</div>
+        <div class="email-panel__subject">${escapeHtml(c.subject || '—')}</div>
+        <div class="email-panel__sent">${fmt.int(c.sent || 0)} sent</div>
+        <div class="stat-row">
+          <span class="stat-row__label">Open rate</span>
+          <span class="stat-row__value">${fmt.pct(c.openRate || 0)}
+            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(c.opensUnique || 0)})</span>
+          </span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-row__label">Click rate</span>
+          <span class="stat-row__value">${fmt.pct(c.clickRate || 0)}
+            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(c.clicksUnique || 0)})</span>
+          </span>
+        </div>
       </div>
-    `).join('');
+    `;
   }
 
   function escapeHtml(s) {

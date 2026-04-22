@@ -99,7 +99,11 @@ async function buildReport(redis, dates) {
   const topReferrers = {};
 
   // Per-visitor tracking for the visitors aggregates block.
-  // visitorStats: vid -> { dates: Set, events: {event: count}, pageviews: int }
+  // visitorStats: vid -> { dates, pageviews, engagedScroll, nonPageviewEvents }
+  // nonPageviewEvents is the count of events that are NOT pageview — a visitor
+  // with pageviews>=1 and nonPageviewEvents===0 is a bounce. engagedScroll is
+  // true once we've seen a scroll_depth >= 50 for the visitor — that's the
+  // funnel's "Engaged" stage.
   const visitorStats = new Map();
   let totalEventsInRange = 0;
 
@@ -113,10 +117,20 @@ async function buildReport(redis, dates) {
     const vid = e.visitor_id;
     if (vid) {
       let vs = visitorStats.get(vid);
-      if (!vs) { vs = { dates: new Set(), events: {}, pageviews: 0 }; visitorStats.set(vid, vs); }
+      if (!vs) {
+        vs = { dates: new Set(), pageviews: 0, nonPageviewEvents: 0, engagedScroll: false };
+        visitorStats.set(vid, vs);
+      }
       if (e.date) vs.dates.add(e.date);
-      vs.events[e.event] = (vs.events[e.event] || 0) + 1;
-      if (e.event === 'pageview') vs.pageviews++;
+      if (e.event === 'pageview') {
+        vs.pageviews++;
+      } else {
+        vs.nonPageviewEvents++;
+      }
+      if (e.event === 'scroll_depth') {
+        const d = Number(e.metadata?.depth);
+        if (d >= 50) vs.engagedScroll = true;
+      }
     }
 
     if (e.event === 'pageview') {
@@ -148,12 +162,11 @@ async function buildReport(redis, dates) {
   // the rest come from the scan since HLL can't enumerate members.
   let returningVisitors = 0;
   let singlePageviewBounces = 0;
+  let engagedVisitors = 0;
   for (const vs of visitorStats.values()) {
     if (vs.dates.size > 1) returningVisitors++;
-    const eventTypes = Object.keys(vs.events);
-    if (vs.pageviews >= 1 && eventTypes.length === 1 && eventTypes[0] === 'pageview') {
-      singlePageviewBounces++;
-    }
+    if (vs.pageviews >= 1 && vs.nonPageviewEvents === 0) singlePageviewBounces++;
+    if (vs.pageviews >= 1 && vs.engagedScroll) engagedVisitors++;
   }
   const scannedVisitors = visitorStats.size;
   const avgEventsPerVisitor = scannedVisitors > 0
@@ -167,6 +180,7 @@ async function buildReport(redis, dates) {
       avg_events_per_visitor: avgEventsPerVisitor,
       returning_visitors: returningVisitors,
       single_pageview_bounces: singlePageviewBounces,
+      engaged_visitors: engagedVisitors,
       scanned_visitors: scannedVisitors,
     },
     events: {

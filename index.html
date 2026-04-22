@@ -779,6 +779,11 @@ function wireMailerLiteForm(formId, thankYouId) {
     });
   }
   window.addEventListener('scroll', onScroll, { passive: true });
+  // Fire once immediately so a page loaded already-scrolled (browser scroll
+  // restoration, anchor links, mobile viewport quirks) still records the
+  // thresholds it passed. Without this, lower thresholds would be undercounted
+  // vs higher ones — breaking funnel monotonicity.
+  onScroll();
 
   // CTA clicks on submit buttons
   document.addEventListener('click', function (e) {
