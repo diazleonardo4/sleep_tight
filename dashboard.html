@@ -142,18 +142,19 @@
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
     display: grid;
     grid-template-columns: repeat(5, 1fr);
-    gap: 16px;
-  }
-  .funnel__col {
-    display: flex; flex-direction: column; align-items: center;
-    min-width: 0;
+    grid-template-rows: auto 180px auto auto;
+    column-gap: 16px;
+    row-gap: 0;
   }
   .funnel > .empty, .funnel > .error { grid-column: 1 / -1; }
+
   .funnel__number {
     font-family: 'Quicksand', sans-serif; font-weight: 700;
     font-size: 24px; color: var(--navy); line-height: 1;
     font-variant-numeric: tabular-nums;
-    margin-bottom: 10px;
+    text-align: center;
+    align-self: end;
+    padding-bottom: 10px;
     white-space: nowrap;
   }
   .funnel__tag {
@@ -162,8 +163,8 @@
     font-weight: 400; margin-top: 3px;
   }
   .funnel__bar-wrap {
-    width: 80%;
-    height: 180px;
+    width: 80%; justify-self: center;
+    height: 100%;
     display: flex; flex-direction: column; justify-content: flex-end;
   }
   .funnel__bar {
@@ -176,7 +177,7 @@
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
     margin-top: 12px; padding-top: 8px;
     border-top: 1px solid var(--border);
-    width: 100%; text-align: center;
+    text-align: center;
   }
   .funnel__rate {
     display: flex; align-items: center; justify-content: center;
@@ -185,6 +186,7 @@
     font-size: 11px; color: var(--navy);
     font-variant-numeric: tabular-nums;
     text-align: center;
+    min-height: 16px;
   }
   .funnel__rate .rate-value { font-weight: 700; }
   .funnel__rate .rate-name { color: var(--text-muted); }
@@ -573,23 +575,33 @@
 
     const top = Math.max(impressions, 1);
 
-    wrap.innerHTML = stages.map((stage, i) => {
+    // Flat grid: row 1 = numbers, row 2 = bars, row 3 = labels, row 4 = rates.
+    // This keeps every column's baselines aligned even when the Pageviews
+    // "(estimated)" tag adds extra height to that number cell.
+    const numbers = stages.map(stage => {
+      const tagHtml = stage.tag ? `<span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
+      return `<div class="funnel__number">${fmt.int(stage.value)}${tagHtml}</div>`;
+    }).join('');
+
+    const bars = stages.map((stage, i) => {
       const heightPct = stage.value > 0 ? (stage.value / top) * 100 : 0;
       const color = barColor(i, stages.length);
-      const tagHtml = stage.tag ? `<span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
-      const rateHtml = stage.rate ? renderRate(stage.rate) : '';
-
       return `
-        <div class="funnel__col">
-          <div class="funnel__number">${fmt.int(stage.value)}${tagHtml}</div>
-          <div class="funnel__bar-wrap">
-            <div class="funnel__bar" style="height: ${heightPct.toFixed(2)}%; background: ${color};"></div>
-          </div>
-          <div class="funnel__label">${escapeHtml(stage.label)}</div>
-          ${rateHtml}
+        <div class="funnel__bar-wrap">
+          <div class="funnel__bar" style="height: ${heightPct.toFixed(2)}%; background: ${color};"></div>
         </div>
       `;
     }).join('');
+
+    const labels = stages.map(stage =>
+      `<div class="funnel__label">${escapeHtml(stage.label)}</div>`
+    ).join('');
+
+    const rates = stages.map(stage =>
+      stage.rate ? renderRate(stage.rate) : `<div class="funnel__rate"></div>`
+    ).join('');
+
+    wrap.innerHTML = numbers + bars + labels + rates;
   }
 
   function renderRate(rate) {
