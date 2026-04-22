@@ -789,12 +789,19 @@ function wireMailerLiteForm(formId, thankYouId) {
     track('cta_click', { cta_location: loc });
   });
 
-  // Form focus (first focus only per input)
-  document.querySelectorAll('input[type="email"]').forEach(function (el) {
-    el.addEventListener('focus', function () {
-      var form = el.closest('form');
-      track('form_focus', { form: (form && form.id) || 'unknown' });
-    }, { once: true });
+  // Form focus — delegate via focusin (bubbles; survives dynamic mounts).
+  // The email inputs are rendered by React after this IIFE runs, so a direct
+  // querySelectorAll at load time matches nothing. Dedupe per-form so we
+  // only record the first focus of each form.
+  var focusedForms = new Set();
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    if (!el || el.tagName !== 'INPUT' || el.type !== 'email') return;
+    var form = el.closest && el.closest('form');
+    var formId = (form && form.id) || 'unknown';
+    if (focusedForms.has(formId)) return;
+    focusedForms.add(formId);
+    track('form_focus', { form: formId });
   });
 
   // Exit intent — desktop (mouseleave top) + mobile (visibilitychange/pagehide).
