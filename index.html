@@ -676,17 +676,63 @@ function wireMailerLiteForm(formId, thankYouId) {
     utm_placement: urlParams.get('utm_placement') || '',
   };
 
-  function track(event, metadata) {
+  // Batched dispatch — bursts of scroll/focus events would previously get
+  // throttled at Vercel's edge (503 before the function runs). Queue up to
+  // 10 events or 2s, then flush in one request. sendBeacon on page hide
+  // guarantees the tail gets delivered during unload.
+  var ENDPOINT = '/api/track';
+  var eventQueue = [];
+  var FLUSH_INTERVAL_MS = 2000;
+  var FLUSH_THRESHOLD = 10;
+  var flushTimer = null;
+
+  function scheduleFlush() {
+    if (flushTimer) return;
+    flushTimer = setTimeout(function () { flushTimer = null; flush(); }, FLUSH_INTERVAL_MS);
+  }
+
+  function flush(useBeacon) {
+    if (eventQueue.length === 0) return;
+    var batch = eventQueue.splice(0, eventQueue.length);
+    var body = JSON.stringify({ events: batch });
+
+    if (useBeacon && navigator.sendBeacon) {
+      try {
+        var blob = new Blob([body], { type: 'application/json' });
+        navigator.sendBeacon(ENDPOINT, blob);
+        return;
+      } catch (_) { /* fall through to fetch */ }
+    }
+
     try {
-      var payload = Object.assign({}, baseData, { event: event, metadata: metadata || {} });
-      fetch('/api/track', {
+      fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: body,
         keepalive: true,
       }).catch(function () {});
     } catch (_) {}
   }
+
+  function track(event, metadata) {
+    eventQueue.push(Object.assign({}, baseData, {
+      event: event,
+      metadata: metadata || {},
+      t: Date.now(),
+    }));
+    if (eventQueue.length >= FLUSH_THRESHOLD) {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      flush();
+    } else {
+      scheduleFlush();
+    }
+  }
+
+  // Force-flush on page hide / unload so in-flight events aren't lost.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flush(true);
+  });
+  window.addEventListener('pagehide', function () { flush(true); });
 
   window.trackEvent = track;
 

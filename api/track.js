@@ -1,17 +1,19 @@
 // POST /api/track
-// Public event ingestion. No auth. IP rate-limited (60/min). Fails open
-// on Redis errors — we never want tracking to break real users.
+// Public event ingestion. No auth. IP rate-limited (60 req/min — each
+// request can carry up to MAX_BATCH events). Fails open on Redis errors —
+// we never want tracking to break real users.
 //
-// Body: {
-//   event: "pageview"|"cta_click"|"scroll_depth"|"form_focus"|
-//          "form_submit_success"|"form_submit_error"|"exit_intent",
-//   path, referrer, utm_source, utm_medium, utm_campaign, utm_content,
-//   utm_placement, metadata: { ... }
-// }
+// Accepts either shape:
+//   Batched:  { events: [{event, visitor_id, ...metadata}, ...] }  (<=50)
+//   Single:   { event, visitor_id, ...metadata }                   (legacy)
+//
+// Per-event fields: event, visitor_id, session_id, path, referrer,
+// utm_source, utm_medium, utm_campaign, utm_content, utm_placement,
+// metadata. Server enriches with timestamp, date, ip_hash, country, UA.
 
 const crypto = require('crypto');
 const { getRedis } = require('../lib/redis');
-const { utcToDashboardDate, todayInDashboardTZ } = require('./_utils/dates');
+const { utcToDashboardDate } = require('./_utils/dates');
 
 const VALID_EVENTS = new Set([
   'pageview',
@@ -25,6 +27,7 @@ const VALID_EVENTS = new Set([
 
 const EVENT_TTL = 60 * 60 * 24 * 90;   // 90 days
 const COUNTER_TTL = 60 * 60 * 24 * 365; // 365 days
+const MAX_BATCH = 50;
 
 module.exports = async (req, res) => {
   // CORS / preflight — track endpoint is same-origin in production, but
@@ -41,15 +44,32 @@ module.exports = async (req, res) => {
   }
 
   const body = typeof req.body === 'string' ? safeParse(req.body) : (req.body || {});
-  const event = String(body.event || '');
-  if (!VALID_EVENTS.has(event)) {
-    return res.status(400).json({ error: 'Invalid event' });
+
+  // Normalize to an array of per-event bodies. Legacy single-event shape
+  // stays supported — if there's no `events` array, treat the body itself
+  // as a single event.
+  const rawEvents = Array.isArray(body.events) ? body.events : [body];
+  if (rawEvents.length === 0) {
+    return res.status(400).json({ error: 'No events' });
+  }
+  if (rawEvents.length > MAX_BATCH) {
+    return res.status(400).json({ error: `Batch too large (max ${MAX_BATCH})` });
+  }
+
+  // Validate every event up front; reject the whole batch if any are bad.
+  const events = [];
+  for (const e of rawEvents) {
+    if (!e || typeof e !== 'object') return res.status(400).json({ error: 'Invalid event' });
+    const name = String(e.event || '');
+    if (!VALID_EVENTS.has(name)) return res.status(400).json({ error: 'Invalid event' });
+    events.push(e);
   }
 
   const ip = clientIp(req);
   const redis = getRedis();
 
-  // Rate limit — fail open on errors
+  // Rate limit — 60 batches/min per IP. Each batch can carry up to
+  // MAX_BATCH events, so effective throughput is well beyond real usage.
   try {
     const rlKey = `rl:${ip}:${Math.floor(Date.now() / 60000)}`;
     const count = await redis.incr(rlKey);
@@ -60,82 +80,91 @@ module.exports = async (req, res) => {
   }
 
   const nowISO = new Date().toISOString();
-  const date = utcToDashboardDate(nowISO); // YYYY-MM-DD in dashboard TZ
+  const date = utcToDashboardDate(nowISO);
   const ua = String(req.headers['user-agent'] || '');
   const country = String(req.headers['x-vercel-ip-country'] || '');
   const ipHash = hashIp(ip, date);
   const parsedUA = parseUA(ua);
 
-  const utmContent = cleanStr(body.utm_content);
-  const utmPlacement = cleanStr(body.utm_placement);
-  const metadata = typeof body.metadata === 'object' && body.metadata ? body.metadata : {};
-  // Constrain to 40 chars — client generates 16-char hex or "anon_<random>" / "sess_<random>"
-  const visitorId = cleanId(body.visitor_id, 40);
-  const sessionId = cleanId(body.session_id, 40);
-
-  const eventRecord = {
-    event,
-    timestamp: nowISO,
-    date,
-    visitor_id: visitorId,
-    session_id: sessionId,
-    path: cleanStr(body.path) || '/',
-    referrer: cleanStr(body.referrer),
-    utm_source: cleanStr(body.utm_source),
-    utm_medium: cleanStr(body.utm_medium),
-    utm_campaign: cleanStr(body.utm_campaign),
-    utm_content: utmContent,
-    utm_placement: utmPlacement,
-    ip_hash: ipHash,
-    country,
-    browser: parsedUA.browser,
-    os: parsedUA.os,
-    device_type: parsedUA.device_type,
-    metadata,
-  };
-
   try {
     const pipeline = redis.pipeline();
-    const ts = Date.now();
+    const tsBase = Date.now();
     const eventsKey = `events:${date}`;
-    pipeline.zadd(eventsKey, ts, JSON.stringify(eventRecord));
-    pipeline.expire(eventsKey, EVENT_TTL);
+    const uniquesKey = `uniques:${date}`;
+    let pipelineOps = 0;
 
-    const countKey = `count:${date}:${event}`;
-    pipeline.incr(countKey);
-    pipeline.expire(countKey, COUNTER_TTL);
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      const name = String(e.event);
+      const utmContent = cleanStr(e.utm_content);
+      const utmPlacement = cleanStr(e.utm_placement);
+      const metadata = typeof e.metadata === 'object' && e.metadata ? e.metadata : {};
+      const visitorId = cleanId(e.visitor_id, 40);
+      const sessionId = cleanId(e.session_id, 40);
 
-    if (utmContent) {
-      const k = `count:${date}:${event}:utm_content:${utmContent}`;
-      pipeline.incr(k);
-      pipeline.expire(k, COUNTER_TTL);
+      const eventRecord = {
+        event: name,
+        timestamp: nowISO,
+        date,
+        visitor_id: visitorId,
+        session_id: sessionId,
+        path: cleanStr(e.path) || '/',
+        referrer: cleanStr(e.referrer),
+        utm_source: cleanStr(e.utm_source),
+        utm_medium: cleanStr(e.utm_medium),
+        utm_campaign: cleanStr(e.utm_campaign),
+        utm_content: utmContent,
+        utm_placement: utmPlacement,
+        ip_hash: ipHash,
+        country,
+        browser: parsedUA.browser,
+        os: parsedUA.os,
+        device_type: parsedUA.device_type,
+        metadata,
+      };
+
+      // Offset ts by index so identical (ts, same-body) pairs in one batch
+      // still ZADD as distinct members — otherwise ZSET dedupes them.
+      pipeline.zadd(eventsKey, tsBase + i, JSON.stringify(eventRecord));
+      pipelineOps++;
+
+      const countKey = `count:${date}:${name}`;
+      pipeline.incr(countKey);
+      pipeline.expire(countKey, COUNTER_TTL);
+      pipelineOps += 2;
+
+      if (utmContent) {
+        const k = `count:${date}:${name}:utm_content:${utmContent}`;
+        pipeline.incr(k);
+        pipeline.expire(k, COUNTER_TTL);
+      }
+      if (utmPlacement) {
+        const k = `count:${date}:${name}:utm_placement:${utmPlacement}`;
+        pipeline.incr(k);
+        pipeline.expire(k, COUNTER_TTL);
+      }
+
+      if (name === 'pageview') {
+        // Prefer visitor_id (survives network changes) — fall back to ip_hash
+        // so pageviews without a visitor_id (rare: JS errors pre-snippet) still
+        // count toward uniques.
+        pipeline.pfadd(uniquesKey, visitorId || ipHash);
+      }
+
+      if (visitorId) {
+        const visitorKey = `visitor:${visitorId}:events`;
+        pipeline.hincrby(visitorKey, name, 1);
+        pipeline.expire(visitorKey, EVENT_TTL);
+        const visitorDatesKey = `visitor:${visitorId}:dates`;
+        pipeline.sadd(visitorDatesKey, date);
+        pipeline.expire(visitorDatesKey, EVENT_TTL);
+      }
     }
-    if (utmPlacement) {
-      const k = `count:${date}:${event}:utm_placement:${utmPlacement}`;
-      pipeline.incr(k);
-      pipeline.expire(k, COUNTER_TTL);
-    }
 
-    if (event === 'pageview') {
-      // Prefer visitor_id (survives network changes) — fall back to ip_hash
-      // so pageviews without a visitor_id (rare: JS errors pre-snippet) still
-      // count toward uniques.
-      const uniquesKey = `uniques:${date}`;
-      pipeline.pfadd(uniquesKey, visitorId || ipHash);
+    // EXPIREs for the shared per-date keys, just once per batch.
+    if (pipelineOps > 0) {
+      pipeline.expire(eventsKey, EVENT_TTL);
       pipeline.expire(uniquesKey, COUNTER_TTL);
-    }
-
-    // Per-visitor event counters (90-day TTL) — powers visitor journey lookups
-    // and engagement aggregates (returning visitors, bounces, events/visitor).
-    if (visitorId) {
-      const visitorKey = `visitor:${visitorId}:events`;
-      pipeline.hincrby(visitorKey, event, 1);
-      pipeline.expire(visitorKey, EVENT_TTL);
-      // Track which dates this visitor appeared on — used to count returning
-      // visitors (appeared on 2+ different days).
-      const visitorDatesKey = `visitor:${visitorId}:dates`;
-      pipeline.sadd(visitorDatesKey, date);
-      pipeline.expire(visitorDatesKey, EVENT_TTL);
     }
 
     await pipeline.exec();
