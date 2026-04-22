@@ -30,6 +30,7 @@
     --text-faint: #8a9ab5;
     --border: #e2e8f0;
     --green: #2e8a4e;
+    --yellow: #d4a843;
     --red: #c8344a;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -77,7 +78,7 @@
   /* ---------- HEADER ---------- */
   .header {
     display: flex; justify-content: space-between; align-items: flex-end;
-    gap: 16px; flex-wrap: wrap; margin-bottom: 32px;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 24px;
   }
   .header__title .eyebrow { margin-bottom: 4px; display: block; }
   .header h1 { font-size: 28px; }
@@ -99,8 +100,21 @@
     letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
   }
 
+  /* ---------- RANGE TOGGLE ---------- */
+  .range {
+    display: inline-flex; background: #fff; border-radius: 10px; padding: 4px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06); margin-bottom: 24px;
+  }
+  .range__btn {
+    background: transparent; border: none; padding: 8px 16px; border-radius: 7px;
+    font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 13px;
+    color: var(--text-muted); transition: all 0.15s;
+  }
+  .range__btn.is-active { background: var(--navy); color: #fff; }
+  .range__btn:hover:not(.is-active) { color: var(--navy); }
+
   /* ---------- SECTIONS & CARDS ---------- */
-  .section { margin-bottom: 40px; }
+  .section { margin-bottom: 36px; }
   .section__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
   .section__head h2 { font-size: 18px; }
 
@@ -121,6 +135,63 @@
   .card__value.is-skeleton { color: var(--border); }
   .card__sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 16px; }
   .card__sub.is-error { color: var(--red); }
+
+  /* ---------- FUNNEL ---------- */
+  .funnel {
+    background: #fff; border-radius: 14px; padding: 24px 28px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  .funnel__row { padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .funnel__row:last-child { border-bottom: none; }
+  .funnel__head {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px; align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .funnel__stage {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+  }
+  .funnel__value {
+    font-family: 'Quicksand', sans-serif; font-weight: 700;
+    font-size: 28px; color: var(--navy); line-height: 1; font-variant-numeric: tabular-nums;
+  }
+  .funnel__value[data-tip] { cursor: help; border-bottom: 1px dotted var(--text-faint); }
+  .funnel__drop {
+    font-size: 12px; font-weight: 600; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .funnel__drop.is-high { color: var(--red); }
+  .funnel__drop.is-med { color: var(--yellow); }
+  .funnel__drop.is-low { color: var(--text-muted); }
+  .funnel__bar-wrap {
+    position: relative;
+    background: var(--cream-warm);
+    border-radius: 6px;
+    height: 12px;
+    overflow: hidden;
+  }
+  .funnel__bar {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.4s cubic-bezier(.2,.8,.2,1);
+  }
+  .funnel__rate {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--text-muted);
+    margin-top: 6px; font-variant-numeric: tabular-nums;
+  }
+  .funnel__rate strong { color: var(--navy); font-weight: 600; }
+  .funnel__rate .bench { font-size: 11px; color: var(--text-faint); }
+  .dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot--green { background: var(--green); }
+  .dot--yellow { background: var(--yellow); }
+  .dot--red { background: var(--red); }
+  .dot--gray { background: var(--text-faint); }
 
   /* ---------- TABLES ---------- */
   .table-wrap {
@@ -151,12 +222,17 @@
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
+    .funnel__head { grid-template-columns: 1fr auto; }
+    .funnel__drop { grid-column: 2; }
+    .funnel__value { grid-column: 1 / -1; font-size: 24px; }
   }
   @media (max-width: 540px) {
     .container { padding: 24px 16px 48px; }
     .cards { grid-template-columns: 1fr; }
     .header h1 { font-size: 22px; }
     .card__value { font-size: 32px; }
+    .funnel { padding: 18px 18px; }
+    .funnel__value { font-size: 22px; }
     th, td { padding: 10px 12px; font-size: 13px; }
   }
 </style>
@@ -190,57 +266,48 @@
     </div>
   </div>
 
-  <!-- TODAY -->
+  <!-- RANGE TOGGLE -->
+  <div class="range" role="tablist" aria-label="Date range">
+    <button class="range__btn" data-range="today" type="button">Today</button>
+    <button class="range__btn" data-range="7d" type="button">Last 7 days</button>
+    <button class="range__btn" data-range="30d" type="button">Last 30 days</button>
+  </div>
+
+  <!-- METRICS ROW -->
   <div class="section">
-    <div class="section__head"><h2>Today</h2></div>
+    <div class="section__head"><h2 id="metricsTitle">Last 7 days</h2></div>
     <div class="cards">
       <div class="card">
         <div class="card__label">Ad Spend</div>
-        <div class="card__value is-skeleton" data-metric="spend-today">—</div>
-        <div class="card__sub" data-metric="spend-today-sub"></div>
+        <div class="card__value is-skeleton" data-metric="spend">—</div>
+        <div class="card__sub" data-metric="spend-sub"></div>
       </div>
       <div class="card">
         <div class="card__label">New Subscribers</div>
-        <div class="card__value is-skeleton" data-metric="subs-today">—</div>
-        <div class="card__sub" data-metric="subs-today-sub">free ebook</div>
+        <div class="card__value is-skeleton" data-metric="subs">—</div>
+        <div class="card__sub" data-metric="subs-sub">free ebook</div>
       </div>
       <div class="card">
         <div class="card__label">Cost / Subscriber</div>
-        <div class="card__value is-skeleton" data-metric="cps-today">—</div>
-        <div class="card__sub" data-metric="cps-today-sub">spend / new subs</div>
-      </div>
-      <div class="card">
-        <div class="card__label">Conv. Rate</div>
-        <div class="card__value is-skeleton" data-metric="cvr-today">—</div>
-        <div class="card__sub" data-metric="cvr-today-sub">new subs / clicks</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- LAST 7 DAYS -->
-  <div class="section">
-    <div class="section__head"><h2>Last 7 Days</h2></div>
-    <div class="cards">
-      <div class="card">
-        <div class="card__label">Total Spend</div>
-        <div class="card__value is-skeleton" data-metric="spend-7">—</div>
-        <div class="card__sub" data-metric="spend-7-sub"></div>
-      </div>
-      <div class="card">
-        <div class="card__label">New Subscribers</div>
-        <div class="card__value is-skeleton" data-metric="subs-7">—</div>
-        <div class="card__sub">free ebook</div>
-      </div>
-      <div class="card">
-        <div class="card__label">Avg. Cost / Sub</div>
-        <div class="card__value is-skeleton" data-metric="cps-7">—</div>
-        <div class="card__sub">7-day blended</div>
+        <div class="card__value is-skeleton" data-metric="cps">—</div>
+        <div class="card__sub" data-metric="cps-sub">spend / new subs</div>
       </div>
       <div class="card">
         <div class="card__label">Paid Bundle Total</div>
         <div class="card__value is-skeleton" data-metric="paid-total">—</div>
-        <div class="card__sub">all-time buyers</div>
+        <div class="card__sub" data-metric="paid-total-sub">all-time buyers</div>
       </div>
+    </div>
+  </div>
+
+  <!-- FUNNEL -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Acquisition funnel</h2>
+      <span class="eyebrow" id="funnelRangeLabel">last 7 days</span>
+    </div>
+    <div class="funnel" id="funnel">
+      <div class="empty">Loading…</div>
     </div>
   </div>
 
@@ -248,7 +315,7 @@
   <div class="section">
     <div class="section__head">
       <h2>Which ad is winning?</h2>
-      <span class="eyebrow">ranked by $ / subscriber · last 7 days</span>
+      <span class="eyebrow" id="adTableRangeLabel">ranked by $ / subscriber · last 7 days</span>
     </div>
     <div class="table-wrap" id="adTableWrap">
       <div class="empty">Loading…</div>
@@ -259,7 +326,7 @@
   <div class="section">
     <div class="section__head">
       <h2>Which placement is winning?</h2>
-      <span class="eyebrow">ranked by $ / subscriber · last 7 days</span>
+      <span class="eyebrow" id="placementTableRangeLabel">ranked by $ / subscriber · last 7 days</span>
     </div>
     <div class="table-wrap" id="placementTableWrap">
       <div class="empty">Loading…</div>
@@ -275,7 +342,49 @@
 
 <script>
   const TOKEN_KEY = 'sleep_tight_dashboard_token';
-  const state = { meta: null, mailerlite: null, vercel: null };
+  const RANGE_KEY = 'sleep_tight_dashboard_range';
+  const VALID_RANGES = ['today', '7d', '30d'];
+  const RANGE_LABELS = { today: 'today', '7d': 'last 7 days', '30d': 'last 30 days' };
+  const RANGE_TITLES = { today: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+
+  // Benchmarks for health/wellness niche (2026)
+  const BENCH = {
+    ctr: 2.7,          // clicks / impressions × 100
+    landing: 90,       // pageviews / clicks × 100
+    signup: 25,        // subs / pageviews × 100
+    purchase: 3,       // paid / free × 100
+  };
+
+  const state = { meta: null, mailerlite: null, vercel: null, range: getInitialRange() };
+
+  function getInitialRange() {
+    const urlRange = new URLSearchParams(location.search).get('range');
+    if (urlRange && VALID_RANGES.includes(urlRange)) return urlRange;
+    const stored = sessionStorage.getItem(RANGE_KEY);
+    if (stored && VALID_RANGES.includes(stored)) return stored;
+    return '7d';
+  }
+
+  function setRange(range) {
+    if (!VALID_RANGES.includes(range) || range === state.range) return;
+    state.range = range;
+    sessionStorage.setItem(RANGE_KEY, range);
+    const url = new URL(location.href);
+    url.searchParams.set('range', range);
+    history.replaceState(null, '', url.toString());
+    updateRangeUi();
+    refreshAll();
+  }
+
+  function updateRangeUi() {
+    document.querySelectorAll('.range__btn').forEach(b => {
+      b.classList.toggle('is-active', b.dataset.range === state.range);
+    });
+    document.getElementById('metricsTitle').textContent = RANGE_TITLES[state.range];
+    document.getElementById('funnelRangeLabel').textContent = RANGE_LABELS[state.range];
+    document.getElementById('adTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
+    document.getElementById('placementTableRangeLabel').textContent = `ranked by $ / subscriber · ${RANGE_LABELS[state.range]}`;
+  }
 
   // ---------- Login ----------
   const loginForm = document.getElementById('loginForm');
@@ -310,6 +419,7 @@
   async function showDashboard() {
     document.getElementById('login').classList.add('hidden');
     document.getElementById('dashboard').classList.remove('hidden');
+    updateRangeUi();
     await refreshAll();
   }
 
@@ -330,15 +440,15 @@
     refreshBtn.disabled = true;
     refreshBtn.textContent = '↻ Loading…';
 
+    const r = encodeURIComponent(state.range);
     const [meta, ml, vercel] = await Promise.allSettled([
-      fetchJson('/api/meta'),
-      fetchJson('/api/mailerlite'),
+      fetchJson(`/api/meta?range=${r}`),
+      fetchJson(`/api/mailerlite?range=${r}`),
       fetchJson('/api/vercel-analytics'),
     ]);
 
-    // Any 401 -> session expired, re-login
-    for (const r of [meta, ml, vercel]) {
-      if (r.status === 'rejected' && r.reason && r.reason.status === 401) {
+    for (const res of [meta, ml, vercel]) {
+      if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
         return;
@@ -376,39 +486,29 @@
   function render() {
     const m = state.meta || {};
     const ml = state.mailerlite || {};
+    const summary = m.summary || {};
 
-    // Today
-    const spendToday = m.today?.spend;
-    const clicksToday = m.today?.clicks ?? 0;
-    const subsToday = ml.subscribers?.freeToday;
-    const cpsToday = (Number.isFinite(spendToday) && subsToday > 0) ? spendToday / subsToday : null;
-    const cvrToday = (clicksToday > 0 && Number.isFinite(subsToday)) ? (subsToday / clicksToday) * 100 : null;
+    const spend = summary.spend;
+    const clicks = summary.clicks ?? 0;
+    const subs = ml.subscribers?.freeInRange;
+    const cps = (Number.isFinite(spend) && subs > 0) ? spend / subs : null;
 
     if (m.error) {
-      setCard('spend-today', '—', m.error, true);
+      setCard('spend', '—', m.error, true);
     } else {
-      setCard('spend-today', fmt.money(spendToday), `${fmt.int(clicksToday)} clicks`);
+      setCard('spend', fmt.money(spend), `${fmt.int(clicks)} clicks · ${fmt.int(summary.impressions ?? 0)} impr.`);
     }
 
     if (ml.error) {
-      setCard('subs-today', '—', ml.error, true);
+      setCard('subs', '—', ml.error, true);
     } else {
-      setCard('subs-today', fmt.int(subsToday), 'free ebook');
+      setCard('subs', fmt.int(subs), 'free ebook · new in range');
     }
 
-    setCard('cps-today', cpsToday != null ? fmt.money(cpsToday) : '—');
-    setCard('cvr-today', cvrToday != null ? fmt.pct(cvrToday) : '—');
+    setCard('cps', cps != null ? fmt.money(cps) : '—', 'spend / new subs');
+    setCard('paid-total', ml.error ? '—' : fmt.int(ml.subscribers?.paid ?? 0), 'all-time buyers');
 
-    // Last 7 days
-    const spend7 = m.last7days?.spend;
-    const subs7 = ml.subscribers?.freeLast7;
-    const cps7 = (Number.isFinite(spend7) && subs7 > 0) ? spend7 / subs7 : null;
-
-    setCard('spend-7', m.error ? '—' : fmt.money(spend7), m.error ? m.error : `${fmt.int(m.last7days?.clicks ?? 0)} clicks`, !!m.error);
-    setCard('subs-7', ml.error ? '—' : fmt.int(subs7));
-    setCard('cps-7', cps7 != null ? fmt.money(cps7) : '—');
-    setCard('paid-total', ml.error ? '—' : fmt.int(ml.subscribers?.paid ?? 0));
-
+    renderFunnel();
     renderAdTable();
     renderPlacementTable();
 
@@ -417,6 +517,99 @@
       document.getElementById('vercelNotice').classList.remove('hidden');
       document.getElementById('vercelMsg').textContent = v.message || 'Vercel Analytics not available.';
     }
+  }
+
+  // ---------- Funnel ----------
+  function renderFunnel() {
+    const wrap = document.getElementById('funnel');
+    const m = state.meta || {};
+    const ml = state.mailerlite || {};
+
+    if (m.error && ml.error) {
+      wrap.innerHTML = `<div class="error">${escapeHtml(m.error)}</div>`;
+      return;
+    }
+
+    const summary = m.summary || {};
+    const impressions = summary.impressions ?? 0;
+    const clicks = summary.clicks ?? 0;
+
+    // Pageviews: use Vercel if available, else fall back to clicks
+    const vercelPv = (state.vercel && state.vercel.available && Number.isFinite(state.vercel.pageviews))
+      ? state.vercel.pageviews
+      : null;
+    const pageviews = vercelPv != null ? vercelPv : clicks;
+    const pageviewsApproximated = vercelPv == null;
+
+    const freeSubs = ml.subscribers?.freeInRange ?? 0;
+    const paidSubs = ml.subscribers?.paidInRange ?? 0;
+
+    const stages = [
+      { key: 'impressions', label: 'Impressions', value: impressions, rate: null },
+      { key: 'clicks',      label: 'Clicks',      value: clicks,
+        rate: { label: 'CTR', pct: impressions > 0 ? (clicks / impressions) * 100 : 0, bench: BENCH.ctr } },
+      { key: 'pageviews',   label: 'Pageviews',   value: pageviews,
+        tip: pageviewsApproximated ? 'Approximated from click data' : null,
+        rate: { label: 'Landing rate', pct: clicks > 0 ? (pageviews / clicks) * 100 : 0, bench: BENCH.landing } },
+      { key: 'free',        label: 'Free Subscribers', value: freeSubs,
+        rate: { label: 'Signup rate', pct: pageviews > 0 ? (freeSubs / pageviews) * 100 : 0, bench: BENCH.signup } },
+      { key: 'paid',        label: 'Paid Buyers', value: paidSubs,
+        rate: { label: 'Purchase rate', pct: freeSubs > 0 ? (paidSubs / freeSubs) * 100 : 0, bench: BENCH.purchase } },
+    ];
+
+    const top = Math.max(impressions, 1);
+
+    wrap.innerHTML = stages.map((stage, i) => {
+      const prev = i > 0 ? stages[i - 1].value : null;
+      const dropPct = prev != null && prev > 0 ? ((prev - stage.value) / prev) * 100 : null;
+      const dropClass = dropPct == null ? '' : dropPct > 70 ? 'is-high' : dropPct >= 50 ? 'is-med' : 'is-low';
+      const dropText = dropPct == null ? '' : `↓ ${dropPct.toFixed(1)}% drop`;
+
+      const widthPct = Math.max((stage.value / top) * 100, stage.value > 0 ? 2 : 0);
+      const grad = barGradient(i, stages.length);
+
+      const rateHtml = stage.rate ? renderRate(stage.rate) : '';
+      const tipAttr = stage.tip ? ` data-tip="${escapeHtml(stage.tip)}" title="${escapeHtml(stage.tip)}"` : '';
+
+      return `
+        <div class="funnel__row">
+          <div class="funnel__head">
+            <span class="funnel__stage">${escapeHtml(stage.label)}</span>
+            <span class="funnel__value"${tipAttr}>${fmt.int(stage.value)}</span>
+            <span class="funnel__drop ${dropClass}">${dropText}</span>
+          </div>
+          <div class="funnel__bar-wrap">
+            <div class="funnel__bar" style="width: ${widthPct.toFixed(2)}%; background: ${grad};"></div>
+          </div>
+          ${rateHtml}
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderRate(rate) {
+    const ratio = rate.bench > 0 ? rate.pct / rate.bench : 0;
+    let dotClass;
+    if (ratio >= 1) dotClass = 'dot--green';
+    else if (ratio >= 0.5) dotClass = 'dot--yellow';
+    else dotClass = 'dot--red';
+    return `
+      <div class="funnel__rate">
+        <span class="dot ${dotClass}" title="Benchmark: ${rate.bench}%"></span>
+        <span><strong>${rate.label}:</strong> ${rate.pct.toFixed(1)}%</span>
+        <span class="bench">benchmark ${rate.bench}%</span>
+      </div>
+    `;
+  }
+
+  function barGradient(i, total) {
+    // Blend navy → gold across stages (i=0 pure navy, i=last pure gold)
+    const t = total > 1 ? i / (total - 1) : 0;
+    const navy = [26, 39, 68];
+    const gold = [212, 168, 67];
+    const mix = navy.map((n, k) => Math.round(n + (gold[k] - n) * t));
+    const color = `rgb(${mix.join(',')})`;
+    return `linear-gradient(90deg, ${color}, ${color})`;
   }
 
   function renderAdTable() {
@@ -431,7 +624,7 @@
       return { ...ad, subs, cps };
     });
     rows.sort((a, b) => a.cps - b.cps);
-    if (!rows.length) { wrap.innerHTML = `<div class="empty">No ad data yet for the last 7 days.</div>`; return; }
+    if (!rows.length) { wrap.innerHTML = `<div class="empty">No ad data yet for ${RANGE_LABELS[state.range]}.</div>`; return; }
     const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
 
     wrap.innerHTML = `
@@ -472,7 +665,7 @@
       return { ...p, subs, cps };
     });
     rows.sort((a, b) => a.cps - b.cps);
-    if (!rows.length) { wrap.innerHTML = `<div class="empty">No placement data yet for the last 7 days.</div>`; return; }
+    if (!rows.length) { wrap.innerHTML = `<div class="empty">No placement data yet for ${RANGE_LABELS[state.range]}.</div>`; return; }
     const winnerIdx = rows.findIndex(r => Number.isFinite(r.cps));
 
     wrap.innerHTML = `
@@ -508,14 +701,16 @@
   // ---------- CSV export ----------
   document.getElementById('exportBtn').addEventListener('click', () => {
     const m = state.meta || {}, ml = state.mailerlite || {};
+    const summary = m.summary || {};
     const rows = [['section', 'key', 'value']];
-    rows.push(['today', 'spend', m.today?.spend ?? '']);
-    rows.push(['today', 'clicks', m.today?.clicks ?? '']);
-    rows.push(['today', 'impressions', m.today?.impressions ?? '']);
-    rows.push(['today', 'new_subscribers', ml.subscribers?.freeToday ?? '']);
-    rows.push(['last7days', 'spend', m.last7days?.spend ?? '']);
-    rows.push(['last7days', 'clicks', m.last7days?.clicks ?? '']);
-    rows.push(['last7days', 'new_subscribers', ml.subscribers?.freeLast7 ?? '']);
+    rows.push(['range', 'selected', state.range]);
+    rows.push(['summary', 'spend', summary.spend ?? '']);
+    rows.push(['summary', 'impressions', summary.impressions ?? '']);
+    rows.push(['summary', 'clicks', summary.clicks ?? '']);
+    rows.push(['summary', 'ctr', summary.ctr ?? '']);
+    rows.push(['summary', 'cpc', summary.cpc ?? '']);
+    rows.push(['summary', 'free_subs_in_range', ml.subscribers?.freeInRange ?? '']);
+    rows.push(['summary', 'paid_subs_in_range', ml.subscribers?.paidInRange ?? '']);
     rows.push(['totals', 'free_subscribers', ml.subscribers?.free ?? '']);
     rows.push(['totals', 'paid_subscribers', ml.subscribers?.paid ?? '']);
     (m.byAd || []).forEach(a => {
@@ -532,7 +727,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `sleep-tight-metrics-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `sleep-tight-metrics-${state.range}-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   });
@@ -541,6 +736,10 @@
   document.getElementById('logoutBtn').addEventListener('click', () => {
     sessionStorage.removeItem(TOKEN_KEY);
     location.reload();
+  });
+
+  document.querySelectorAll('.range__btn').forEach(btn => {
+    btn.addEventListener('click', () => setRange(btn.dataset.range));
   });
 
   // ---------- Boot ----------

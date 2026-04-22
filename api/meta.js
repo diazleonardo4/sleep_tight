@@ -1,23 +1,31 @@
-// GET /api/meta  (header: x-auth-token)
-// Returns combined Meta Ads insights for today and the last 7 days,
+// GET /api/meta?range=today|7d|30d  (header: x-auth-token)
+// Returns Meta Ads insights for the requested range,
 // plus per-ad and per-placement breakdowns.
 //
 // Response shape:
 // {
-//   today:      { spend, impressions, clicks, reach, ctr, cpc, cpm },
-//   last7days:  { ...same },
-//   byAd:       [ { name, spend, impressions, clicks, ctr, cpc } ],
-//   byPlacement:[ { placement, spend, impressions, clicks, ctr } ]
+//   range:       "today" | "7d" | "30d",
+//   summary:     { spend, impressions, clicks, reach, ctr, cpc, cpm },
+//   byAd:        [ { name, spend, impressions, clicks, ctr, cpc } ],
+//   byPlacement: [ { placement, spend, impressions, clicks, ctr } ]
 // }
 
-const cache = { data: null, at: 0 };
+const RANGE_TO_PRESET = {
+  today: 'today',
+  '7d': 'last_7d',
+  '30d': 'last_30d',
+};
+
+const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
 
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
-  if (cache.data && Date.now() - cache.at < CACHE_MS) {
-    return res.status(200).json(cache.data);
+  const range = normalizeRange(req);
+  const hit = cache.get(range);
+  if (hit && Date.now() - hit.at < CACHE_MS) {
+    return res.status(200).json(hit.data);
   }
 
   const accountId = process.env.META_AD_ACCOUNT_ID;
@@ -26,18 +34,19 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Meta env vars not configured' });
   }
 
+  const preset = RANGE_TO_PRESET[range];
+
   try {
     const baseFields = 'spend,impressions,clicks,ctr,cpc,cpm,reach';
-    const [todayRows, last7Rows, perAdRows, perPlacementRows] = await Promise.all([
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=today`),
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=last_7d`),
-      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&date_preset=last_7d&limit=200`),
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=last_7d&breakdowns=publisher_platform,platform_position`),
+    const [summaryRows, perAdRows, perPlacementRows] = await Promise.all([
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=${preset}`),
+      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&date_preset=${preset}&limit=200`),
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&date_preset=${preset}&breakdowns=publisher_platform,platform_position`),
     ]);
 
     const data = {
-      today: summarize(todayRows),
-      last7days: summarize(last7Rows),
+      range,
+      summary: summarize(summaryRows),
       byAd: perAdRows.map(r => ({
         name: r.ad_name || 'unnamed',
         spend: num(r.spend),
@@ -55,13 +64,18 @@ module.exports = async (req, res) => {
       })),
     };
 
-    cache.data = data;
-    cache.at = Date.now();
+    cache.set(range, { data, at: Date.now() });
     res.status(200).json(data);
   } catch (err) {
     res.status(502).json({ error: `Meta API error: ${err.message}` });
   }
 };
+
+function normalizeRange(req) {
+  const q = (req.query && req.query.range) || new URL(req.url, 'http://x').searchParams.get('range');
+  const r = String(q || '7d').toLowerCase();
+  return RANGE_TO_PRESET[r] ? r : '7d';
+}
 
 function checkAuth(req, res) {
   const expected = process.env.DASHBOARD_PASSWORD;
@@ -109,7 +123,6 @@ function round2(n) { return Math.round(n * 100) / 100; }
 function placementKey(r) {
   const platform = (r.publisher_platform || 'unknown').toString();
   const position = (r.platform_position || 'unknown').toString();
-  // Capitalize first letter of each segment so it reads like "Facebook_Feed"
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
   return `${cap(platform)}_${cap(position)}`;
 }

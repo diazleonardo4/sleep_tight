@@ -1,22 +1,32 @@
-// GET /api/mailerlite  (header: x-auth-token)
+// GET /api/mailerlite?range=today|7d|30d  (header: x-auth-token)
 // Returns subscriber counts for the free-ebook and paid-bundle groups,
-// plus breakdowns by utm_content (ad) and utm_placement.
+// plus breakdowns by utm_content (ad) and utm_placement for the range.
 //
 // Response shape:
 // {
-//   subscribers: { free, paid, freeToday, freeLast7 },
-//   byAd:        { "<utm_content>": count, ... },
-//   byPlacement: { "<utm_placement>": count, ... }
+//   range: "today" | "7d" | "30d",
+//   subscribers: {
+//     free:         <all-time free group total>,
+//     paid:         <all-time paid group total>,
+//     freeInRange:  <free subs created within the range>,
+//     paidInRange:  <paid subs created within the range>
+//   },
+//   byAd:        { "<utm_content>": count, ... },     // within range
+//   byPlacement: { "<utm_placement>": count, ... }    // within range
 // }
 
-const cache = { data: null, at: 0 };
+const RANGE_TO_DAYS = { today: 0, '7d': 7, '30d': 30 };
+
+const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
 
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
-  if (cache.data && Date.now() - cache.at < CACHE_MS) {
-    return res.status(200).json(cache.data);
+  const range = normalizeRange(req);
+  const hit = cache.get(range);
+  if (hit && Date.now() - hit.at < CACHE_MS) {
+    return res.status(200).json(hit.data);
   }
 
   const token = process.env.MAILERLITE_API_TOKEN;
@@ -32,15 +42,13 @@ module.exports = async (req, res) => {
       fetchAllSubscribers(paidGroupId, token),
     ]);
 
-    const today = startOfDayUtc(0);
-    const sevenDaysAgo = startOfDayUtc(7);
-
-    const freeToday = free.filter(s => subscribedAt(s) >= today).length;
-    const freeLast7 = free.filter(s => subscribedAt(s) >= sevenDaysAgo).length;
+    const since = startOfRange(range);
+    const freeInWindow = free.filter(s => subscribedAt(s) >= since);
+    const paidInWindow = paid.filter(s => subscribedAt(s) >= since);
 
     const byAd = {};
     const byPlacement = {};
-    for (const s of free) {
+    for (const s of freeInWindow) {
       const ad = (s.fields && s.fields.utm_content) || 'unknown';
       const placement = (s.fields && s.fields.utm_placement) || 'unknown';
       byAd[ad] = (byAd[ad] || 0) + 1;
@@ -48,17 +56,35 @@ module.exports = async (req, res) => {
     }
 
     const data = {
-      subscribers: { free: free.length, paid: paid.length, freeToday, freeLast7 },
+      range,
+      subscribers: {
+        free: free.length,
+        paid: paid.length,
+        freeInRange: freeInWindow.length,
+        paidInRange: paidInWindow.length,
+      },
       byAd,
       byPlacement,
     };
-    cache.data = data;
-    cache.at = Date.now();
+    cache.set(range, { data, at: Date.now() });
     res.status(200).json(data);
   } catch (err) {
     res.status(502).json({ error: `MailerLite API error: ${err.message}` });
   }
 };
+
+function normalizeRange(req) {
+  const q = (req.query && req.query.range) || new URL(req.url, 'http://x').searchParams.get('range');
+  const r = String(q || '7d').toLowerCase();
+  return RANGE_TO_DAYS[r] != null ? r : '7d';
+}
+
+function startOfRange(range) {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - RANGE_TO_DAYS[range]);
+  return d.getTime();
+}
 
 function checkAuth(req, res) {
   const expected = process.env.DASHBOARD_PASSWORD;
@@ -74,7 +100,7 @@ async function fetchAllSubscribers(groupId, token) {
   const base = 'https://connect.mailerlite.com/api/subscribers';
   const all = [];
   const limit = 500;
-  const hardCap = 10000; // safety
+  const hardCap = 10000;
   let cursor = null;
 
   while (true) {
@@ -104,11 +130,4 @@ async function fetchAllSubscribers(groupId, token) {
 function subscribedAt(s) {
   const v = s.subscribed_at || s.created_at;
   return v ? new Date(v).getTime() : 0;
-}
-
-function startOfDayUtc(offsetDays) {
-  const d = new Date();
-  d.setUTCHours(0, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - offsetDays);
-  return d.getTime();
 }
