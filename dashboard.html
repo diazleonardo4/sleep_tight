@@ -136,56 +136,60 @@
   .card__sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 16px; }
   .card__sub.is-error { color: var(--red); }
 
-  /* ---------- FUNNEL ---------- */
+  /* ---------- FUNNEL (vertical bar chart) ---------- */
   .funnel {
-    background: #fff; border-radius: 14px; padding: 28px 32px;
+    background: #fff; border-radius: 14px; padding: 24px 24px 20px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
-    display: flex; flex-direction: column; gap: 20px;
-  }
-  .funnel__row {
     display: grid;
-    grid-template-columns: 180px 1fr;
-    gap: 24px;
-    align-items: center;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
   }
-  .funnel__stage {
-    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 11px;
-    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+  .funnel__col {
+    display: flex; flex-direction: column; align-items: center;
+    min-width: 0;
   }
-  .funnel__body { min-width: 0; }
-  .funnel__top {
-    display: flex; align-items: baseline; gap: 10px;
-    margin-bottom: 6px; flex-wrap: wrap;
-  }
-  .funnel__value {
+  .funnel > .empty, .funnel > .error { grid-column: 1 / -1; }
+  .funnel__number {
     font-family: 'Quicksand', sans-serif; font-weight: 700;
-    font-size: 28px; color: var(--navy); line-height: 1; font-variant-numeric: tabular-nums;
+    font-size: 24px; color: var(--navy); line-height: 1;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 10px;
+    white-space: nowrap;
   }
   .funnel__tag {
-    font-size: 11px; color: var(--text-faint); font-style: italic;
+    display: block;
+    font-size: 10px; color: var(--text-faint); font-style: italic;
+    font-weight: 400; margin-top: 3px;
   }
   .funnel__bar-wrap {
-    background: var(--cream-warm);
-    border-radius: 6px;
-    height: 32px;
-    overflow: hidden;
+    width: 80%;
+    height: 180px;
+    display: flex; flex-direction: column; justify-content: flex-end;
   }
   .funnel__bar {
-    height: 100%;
-    border-radius: 6px;
-    min-width: 4px;
-    transition: width 0.4s cubic-bezier(.2,.8,.2,1);
+    width: 100%; min-height: 4px;
+    border-radius: 6px 6px 0 0;
+    transition: height 0.4s cubic-bezier(.2,.8,.2,1);
+  }
+  .funnel__label {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 12px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold);
+    margin-top: 12px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+    width: 100%; text-align: center;
   }
   .funnel__rate {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px; color: var(--text-muted);
-    margin-top: 8px; font-variant-numeric: tabular-nums;
-    flex-wrap: wrap;
+    display: flex; align-items: center; justify-content: center;
+    gap: 6px; flex-wrap: wrap;
+    margin-top: 6px;
+    font-size: 11px; color: var(--navy);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
   }
-  .funnel__rate strong { color: var(--navy); font-weight: 700; }
-  .funnel__rate .bench { color: var(--text-faint); }
+  .funnel__rate .rate-value { font-weight: 700; }
+  .funnel__rate .rate-name { color: var(--text-muted); }
   .dot {
-    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     flex-shrink: 0;
   }
   .dot--green { background: #27AE60; }
@@ -222,19 +226,26 @@
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
-    .funnel__row { grid-template-columns: 140px 1fr; gap: 16px; }
-    .funnel__value { font-size: 24px; }
+    .funnel { gap: 10px; padding: 20px 16px 16px; }
+    .funnel__number { font-size: 20px; }
   }
-  @media (max-width: 540px) {
+  @media (max-width: 640px) {
     .container { padding: 24px 16px 48px; }
     .cards { grid-template-columns: 1fr; }
     .header h1 { font-size: 22px; }
     .card__value { font-size: 32px; }
-    .funnel { padding: 20px 18px; gap: 18px; }
-    .funnel__row { grid-template-columns: 1fr; gap: 6px; }
-    .funnel__value { font-size: 22px; }
-    .funnel__bar-wrap { height: 24px; }
+    .funnel { gap: 6px; padding: 18px 10px 14px; }
+    .funnel__number { font-size: 18px; }
+    .funnel__bar-wrap { height: 130px; }
+    .funnel__label { font-size: 10px; letter-spacing: 0.1em; margin-top: 8px; padding-top: 6px; }
+    .funnel__rate { font-size: 10px; gap: 4px; }
     th, td { padding: 10px 12px; font-size: 13px; }
+  }
+  @media (max-width: 360px) {
+    .funnel { gap: 4px; padding: 16px 6px 12px; }
+    .funnel__number { font-size: 15px; }
+    .funnel__label { letter-spacing: 0.06em; }
+    .funnel__bar-wrap { width: 90%; }
   }
 </style>
 </head>
@@ -554,7 +565,7 @@
       { label: 'Pageviews',   value: pageviews,
         tag: pageviewsEstimated ? '(estimated)' : null,
         rate: { label: 'Landing rate', pct: clicks > 0 ? (pageviews / clicks) * 100 : 0, bench: BENCH.landing } },
-      { label: 'Free Subs',   value: freeSubs,
+      { label: 'Subs',        value: freeSubs,
         rate: { label: 'Signup rate', pct: pageviews > 0 ? (freeSubs / pageviews) * 100 : 0, bench: BENCH.signup } },
       { label: 'Paid',        value: paidSubs,
         rate: { label: 'Purchase rate', pct: freeSubs > 0 ? (paidSubs / freeSubs) * 100 : 0, bench: BENCH.purchase } },
@@ -563,23 +574,19 @@
     const top = Math.max(impressions, 1);
 
     wrap.innerHTML = stages.map((stage, i) => {
-      const widthPct = stage.value > 0 ? (stage.value / top) * 100 : 0;
+      const heightPct = stage.value > 0 ? (stage.value / top) * 100 : 0;
       const color = barColor(i, stages.length);
-      const tagHtml = stage.tag ? ` <span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
+      const tagHtml = stage.tag ? `<span class="funnel__tag">${escapeHtml(stage.tag)}</span>` : '';
       const rateHtml = stage.rate ? renderRate(stage.rate) : '';
 
       return `
-        <div class="funnel__row">
-          <span class="funnel__stage">${escapeHtml(stage.label)}</span>
-          <div class="funnel__body">
-            <div class="funnel__top">
-              <span class="funnel__value">${fmt.int(stage.value)}</span>${tagHtml}
-            </div>
-            <div class="funnel__bar-wrap">
-              <div class="funnel__bar" style="width: ${widthPct.toFixed(2)}%; background: ${color};"></div>
-            </div>
-            ${rateHtml}
+        <div class="funnel__col">
+          <div class="funnel__number">${fmt.int(stage.value)}${tagHtml}</div>
+          <div class="funnel__bar-wrap">
+            <div class="funnel__bar" style="height: ${heightPct.toFixed(2)}%; background: ${color};"></div>
           </div>
+          <div class="funnel__label">${escapeHtml(stage.label)}</div>
+          ${rateHtml}
         </div>
       `;
     }).join('');
@@ -592,10 +599,10 @@
     else if (ratio >= 0.5) dotClass = 'dot--yellow';
     else dotClass = 'dot--red';
     return `
-      <div class="funnel__rate">
-        <span><strong>${rate.label}:</strong> ${rate.pct.toFixed(1)}%</span>
-        <span class="dot ${dotClass}" title="Benchmark: ${rate.bench}%"></span>
-        <span class="bench">vs ${rate.bench}%</span>
+      <div class="funnel__rate" title="Benchmark: ${rate.bench}%">
+        <span class="rate-value">${rate.pct.toFixed(1)}%</span>
+        <span class="dot ${dotClass}"></span>
+        <span class="rate-name">${escapeHtml(rate.label)}</span>
       </div>
     `;
   }
