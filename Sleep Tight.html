@@ -641,8 +641,31 @@ function wireMailerLiteForm(formId, thankYouId) {
 <script>
 // Self-hosted analytics — posts to /api/track. Fails silently.
 (function () {
+  function getOrCreateVisitorId() {
+    var KEY = 'st_vid';
+    try {
+      var id = localStorage.getItem(KEY);
+      if (!id) {
+        if (window.crypto && crypto.randomUUID) {
+          id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+        } else {
+          id = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+        }
+        localStorage.setItem(KEY, id);
+      }
+      return id;
+    } catch (e) {
+      return 'anon_' + Math.random().toString(36).slice(2, 10);
+    }
+  }
+
+  var VISITOR_ID = getOrCreateVisitorId();
+  var SESSION_ID = 'sess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
   var urlParams = new URLSearchParams(window.location.search);
   var baseData = {
+    visitor_id: VISITOR_ID,
+    session_id: SESSION_ID,
     path: window.location.pathname,
     referrer: document.referrer || '',
     utm_source: urlParams.get('utm_source') || '',

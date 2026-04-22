@@ -813,14 +813,24 @@
 
     const pv = a.pageviews || {};
     const events = a.events || {};
+    const v = a.visitors || {};
     const total = pv.total || 0;
     const unique = pv.unique || 0;
     const pvPerVisitor = unique > 0 ? (total / unique).toFixed(2) : '—';
+
+    const scanned = v.scanned_visitors || 0;
+    const returning = v.returning_visitors || 0;
+    const bounces = v.single_pageview_bounces || 0;
+    const returningPct = scanned > 0 ? (returning / scanned) * 100 : 0;
+    const bouncePct = scanned > 0 ? (bounces / scanned) * 100 : 0;
 
     traffic.innerHTML = `
       <div class="stat-row"><span class="stat-row__label">Pageviews</span><span class="stat-row__value">${fmt.int(total)}</span></div>
       <div class="stat-row"><span class="stat-row__label">Unique visitors</span><span class="stat-row__value">${fmt.int(unique)}</span></div>
       <div class="stat-row"><span class="stat-row__label">Pageviews / visitor</span><span class="stat-row__value">${pvPerVisitor}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Avg events / visitor</span><span class="stat-row__value">${v.avg_events_per_visitor ?? '—'}</span></div>
+      <div class="stat-row"><span class="stat-row__label">Returning visitors</span><span class="stat-row__value">${fmt.int(returning)} / ${fmt.int(scanned)} <span style="color:var(--text-muted);font-weight:400">(${returningPct.toFixed(0)}%)</span></span></div>
+      <div class="stat-row"><span class="stat-row__label">Bounce (pageview only)</span><span class="stat-row__value">${fmt.int(bounces)} / ${fmt.int(scanned)} <span style="color:var(--text-muted);font-weight:400">(${bouncePct.toFixed(0)}%)</span></span></div>
     `;
 
     const sd = events.scroll_depth || {};

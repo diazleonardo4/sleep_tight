@@ -98,10 +98,26 @@ async function buildReport(redis, dates) {
   const scrollDepthBuckets = { 25: 0, 50: 0, 75: 0, 100: 0 };
   const topReferrers = {};
 
+  // Per-visitor tracking for the visitors aggregates block.
+  // visitorStats: vid -> { dates: Set, events: {event: count}, pageviews: int }
+  const visitorStats = new Map();
+  let totalEventsInRange = 0;
+
   for (const raw of allRaw) {
     let e;
     try { e = JSON.parse(raw); } catch (_) { continue; }
     if (!e || !SCAN_EVENTS.has(e.event)) continue;
+
+    totalEventsInRange++;
+
+    const vid = e.visitor_id;
+    if (vid) {
+      let vs = visitorStats.get(vid);
+      if (!vs) { vs = { dates: new Set(), events: {}, pageviews: 0 }; visitorStats.set(vid, vs); }
+      if (e.date) vs.dates.add(e.date);
+      vs.events[e.event] = (vs.events[e.event] || 0) + 1;
+      if (e.event === 'pageview') vs.pageviews++;
+    }
 
     if (e.event === 'pageview') {
       if (e.country) breakdowns.byCountry[e.country] = (breakdowns.byCountry[e.country] || 0) + 1;
@@ -128,8 +144,31 @@ async function buildReport(redis, dates) {
     }
   }
 
+  // Visitor aggregates. totalUnique uses the HLL (cheap, accurate to ~0.8%);
+  // the rest come from the scan since HLL can't enumerate members.
+  let returningVisitors = 0;
+  let singlePageviewBounces = 0;
+  for (const vs of visitorStats.values()) {
+    if (vs.dates.size > 1) returningVisitors++;
+    const eventTypes = Object.keys(vs.events);
+    if (vs.pageviews >= 1 && eventTypes.length === 1 && eventTypes[0] === 'pageview') {
+      singlePageviewBounces++;
+    }
+  }
+  const scannedVisitors = visitorStats.size;
+  const avgEventsPerVisitor = scannedVisitors > 0
+    ? +(totalEventsInRange / scannedVisitors).toFixed(2)
+    : 0;
+
   return {
     pageviews: { total: pageviewsTotal, unique: uniquePageviews },
+    visitors: {
+      total_unique: uniquePageviews,
+      avg_events_per_visitor: avgEventsPerVisitor,
+      returning_visitors: returningVisitors,
+      single_pageview_bounces: singlePageviewBounces,
+      scanned_visitors: scannedVisitors,
+    },
     events: {
       cta_click: { total: ctaClickTotal, byLocation: ctaByLocation },
       scroll_depth: scrollDepthBuckets,

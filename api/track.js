@@ -69,11 +69,16 @@ module.exports = async (req, res) => {
   const utmContent = cleanStr(body.utm_content);
   const utmPlacement = cleanStr(body.utm_placement);
   const metadata = typeof body.metadata === 'object' && body.metadata ? body.metadata : {};
+  // Constrain to 40 chars — client generates 16-char hex or "anon_<random>" / "sess_<random>"
+  const visitorId = cleanId(body.visitor_id, 40);
+  const sessionId = cleanId(body.session_id, 40);
 
   const eventRecord = {
     event,
     timestamp: nowISO,
     date,
+    visitor_id: visitorId,
+    session_id: sessionId,
     path: cleanStr(body.path) || '/',
     referrer: cleanStr(body.referrer),
     utm_source: cleanStr(body.utm_source),
@@ -112,9 +117,25 @@ module.exports = async (req, res) => {
     }
 
     if (event === 'pageview') {
+      // Prefer visitor_id (survives network changes) — fall back to ip_hash
+      // so pageviews without a visitor_id (rare: JS errors pre-snippet) still
+      // count toward uniques.
       const uniquesKey = `uniques:${date}`;
-      pipeline.pfadd(uniquesKey, ipHash);
+      pipeline.pfadd(uniquesKey, visitorId || ipHash);
       pipeline.expire(uniquesKey, COUNTER_TTL);
+    }
+
+    // Per-visitor event counters (90-day TTL) — powers visitor journey lookups
+    // and engagement aggregates (returning visitors, bounces, events/visitor).
+    if (visitorId) {
+      const visitorKey = `visitor:${visitorId}:events`;
+      pipeline.hincrby(visitorKey, event, 1);
+      pipeline.expire(visitorKey, EVENT_TTL);
+      // Track which dates this visitor appeared on — used to count returning
+      // visitors (appeared on 2+ different days).
+      const visitorDatesKey = `visitor:${visitorId}:dates`;
+      pipeline.sadd(visitorDatesKey, date);
+      pipeline.expire(visitorDatesKey, EVENT_TTL);
     }
 
     await pipeline.exec();
@@ -133,6 +154,14 @@ function cleanStr(v) {
   if (v == null) return '';
   const s = String(v).trim();
   return s.length > 200 ? s.slice(0, 200) : s;
+}
+
+// Strict sanitizer for visitor/session ids. Alphanumerics + `_` + `-` only so
+// they're always safe to embed in Redis key names. Anything else → empty.
+function cleanId(v, max) {
+  if (v == null) return '';
+  const s = String(v).trim().slice(0, max || 40);
+  return /^[A-Za-z0-9_-]+$/.test(s) ? s : '';
 }
 
 function clientIp(req) {
