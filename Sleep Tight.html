@@ -690,6 +690,34 @@ function wireMailerLiteForm(formId, thankYouId) {
     flushTimer = setTimeout(function () { flushTimer = null; flush(); }, FLUSH_INTERVAL_MS);
   }
 
+  // Retry once after 1s on network error OR non-2xx. The FIRST request to a
+  // cold Vercel function sometimes returns 503 at the edge before the handler
+  // runs (container / Redis still warming). After ~1s the container is warm
+  // and the retry succeeds. One retry only — don't hammer a broken endpoint.
+  function sendBatch(body, attempt) {
+    try {
+      return fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+        keepalive: true,
+      }).then(function (r) {
+        if (!r.ok && attempt === 0) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(sendBatch(body, 1)); }, 1000);
+          });
+        }
+        return r;
+      }).catch(function () {
+        if (attempt === 0) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(sendBatch(body, 1)); }, 1000);
+          });
+        }
+      });
+    } catch (_) {}
+  }
+
   function flush(useBeacon) {
     if (eventQueue.length === 0) return;
     var batch = eventQueue.splice(0, eventQueue.length);
@@ -703,14 +731,7 @@ function wireMailerLiteForm(formId, thankYouId) {
       } catch (_) { /* fall through to fetch */ }
     }
 
-    try {
-      fetch(ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: body,
-        keepalive: true,
-      }).catch(function () {});
-    } catch (_) {}
+    sendBatch(body, 0);
   }
 
   function track(event, metadata) {
