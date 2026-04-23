@@ -4,27 +4,30 @@
 //
 // Timezone handling:
 //   - "today / 7d / 30d" windows are computed in DASHBOARD_TIMEZONE
-//     (see api/_utils/dates.js).
-//   - Meta's API buckets by the AD ACCOUNT timezone. Set
-//     META_AD_ACCOUNT_TIMEZONE (e.g. "America/Los_Angeles") to match
-//     what's in Meta Business Settings → Ad Accounts. If it differs
-//     from the dashboard TZ, the dashboard-TZ range is translated to
-//     the ad account TZ on the way out.
-//   - Cross-check: Meta Ads Manager shows numbers in the ad account
-//     TZ, so today's impressions may differ from the dashboard by a
-//     few % due to the offset — that's expected.
+//     (see api/_utils/dates.js) and sent to Meta verbatim. Meta
+//     interprets the YYYY-MM-DD strings in the AD ACCOUNT timezone's
+//     wall-clock, so the window may shift by a few hours of UTC vs.
+//     the dashboard TZ. That's deliberate — it keeps the dashboard's
+//     "Today" aligned to the exact calendar day the user sees when
+//     setting Meta Ads Manager's date picker to "Today" in the same
+//     zone. Earlier we translated dashboard boundaries → ad account TZ
+//     which caused an off-by-one when the ad account TZ sat west of
+//     the dashboard TZ (e.g. LA vs Bogota).
 //
 // Response shape:
 // {
 //   range:       "today" | "7d" | "30d",
-//   timeRange:   { since, until },           // as sent to Meta (ad account TZ)
+//   timeRange:   { since, until },           // as sent to Meta — matches dashboardRange
 //   dashboardRange: { since, until },        // original dashboard-TZ window
 //   summary:     { spend, impressions, clicks, reach, ctr, cpc, cpm },
 //   byAd:        [ { name, spend, impressions, clicks, ctr, cpc } ],
 //   byPlacement: [ { placement, spend, impressions, clicks, ctr } ]
 // }
+//
+// Monetary values (spend, cpc, cpm) come back in the ad account's
+// currency — the dashboard handles display-side conversion.
 
-const { getDateRange, rangeInTZ, normalizeRange, DASHBOARD_TZ } = require('./_utils/dates');
+const { getDateRange, normalizeRange } = require('./_utils/dates');
 
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
@@ -44,9 +47,8 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Meta env vars not configured' });
   }
 
-  const adTZ = process.env.META_AD_ACCOUNT_TIMEZONE || DASHBOARD_TZ;
   const dashboardRange = getDateRange(range);
-  const timeRange = rangeInTZ(range, adTZ);
+  const timeRange = dashboardRange;
   const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
   try {

@@ -144,8 +144,21 @@
     font-size: 40px; color: var(--navy); line-height: 1.1;
   }
   .card__value.is-skeleton { color: var(--border); }
+  .card__secondary {
+    font-family: 'Quicksand', sans-serif; font-weight: 600;
+    font-size: 13px; color: var(--text-muted);
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    min-height: 16px;
+  }
+  .card__secondary:empty { display: none; }
   .card__sub { font-size: 13px; color: var(--text-muted); margin-top: 6px; min-height: 16px; }
   .card__sub.is-error { color: var(--red); }
+
+  /* dual-currency cell in tables: USD primary, COP small-muted in parens */
+  .money-dual { font-variant-numeric: tabular-nums; }
+  .money-dual__cop { color: var(--text-muted); font-weight: 500; font-size: 12px; margin-left: 4px; }
 
   /* ---------- FUNNEL (vertical bar chart) ---------- */
   .funnel {
@@ -340,6 +353,7 @@
       <div class="card" data-card="spend">
         <div class="card__label">Spend</div>
         <div class="card__value is-skeleton" data-metric="spend">—</div>
+        <div class="card__secondary" data-metric="spend-cop"></div>
         <div class="card__sub" data-metric="spend-sub"></div>
       </div>
       <div class="card" data-card="free-subs">
@@ -350,12 +364,14 @@
       <div class="card" data-card="cost-free">
         <div class="card__label">Cost / Free Sub</div>
         <div class="card__value is-skeleton" data-metric="cost-free">—</div>
-        <div class="card__sub" data-metric="cost-free-sub">benchmark &lt; $2</div>
+        <div class="card__secondary" data-metric="cost-free-cop"></div>
+        <div class="card__sub" data-metric="cost-free-sub">benchmark &lt; $2.00 USD</div>
       </div>
       <div class="card" data-card="cost-paid">
         <div class="card__label">Cost / Paid</div>
         <div class="card__value is-skeleton" data-metric="cost-paid">—</div>
-        <div class="card__sub" data-metric="cost-paid-sub">benchmark &lt; $30</div>
+        <div class="card__secondary" data-metric="cost-paid-cop"></div>
+        <div class="card__sub" data-metric="cost-paid-sub">benchmark &lt; $30.00 USD</div>
       </div>
     </div>
   </div>
@@ -418,12 +434,18 @@
     engagement: 40,        // engaged visitors / pageviews × 100
     signup: 25,            // free subs / pageviews × 100
     purchase: 3,           // paid subs / free subs × 100
-    costPerFree: 2,        // $ / free sub
-    costPerPaid: 30,       // $ / paid sub
+    costPerFree: 2,        // USD / free sub
+    costPerPaid: 30,       // USD / paid sub
   };
   // Scale/Kill thresholds for the ad & placement tables.
   const WINNER_MIN_SUBS = 5;
   const KILL_MIN_CLICKS = 10;
+
+  // Meta ad account bills in COP — approximate conversion for USD display.
+  // Benchmark logic stays in USD; COP is display-only. Update this when
+  // the exchange rate drifts (ship a one-line commit).
+  const COP_PER_USD = 4000;
+  const copToUsd = (cop) => Number.isFinite(cop) ? cop / COP_PER_USD : NaN;
 
   const state = { meta: null, mailerlite: null, analytics: null, email: null, config: null, range: getInitialRange() };
 
@@ -552,11 +574,35 @@
   }
 
   // ---------- Formatters ----------
+  // Meta returns spend in the ad account's currency (COP). The dashboard
+  // displays USD primary + COP secondary. Benchmarks live in USD, so any
+  // value that feeds costClass() / statusFor() must be converted first.
   const fmt = {
     money: n => Number.isFinite(+n) ? '$' + (+n).toFixed(2) : '—',
     pct: n => Number.isFinite(+n) ? (+n).toFixed(2) + '%' : '—',
     int: n => Number.isFinite(+n) ? Math.round(+n).toLocaleString() : '—',
+    usd: n => {
+      if (!Number.isFinite(+n)) return '—';
+      const v = +n;
+      if (v === 0) return '$0.00';
+      if (v > 0 && v < 0.01) return '<$0.01';
+      return '$' + v.toFixed(2);
+    },
+    cop: n => {
+      if (!Number.isFinite(+n)) return '—';
+      return 'COP ' + Math.round(+n).toLocaleString('en-US');
+    },
+    // Dual inline cell: USD then small-muted COP. Used inside innerHTML tables.
+    dualInline: cop => {
+      if (!Number.isFinite(+cop)) return '—';
+      return `<span class="money-dual">${fmt.usd(copToUsd(+cop))}<span class="money-dual__cop">${fmt.cop(+cop)}</span></span>`;
+    },
   };
+
+  function setSecondary(key, text) {
+    const el = document.querySelector(`[data-metric="${key}-cop"]`);
+    if (el) el.textContent = text || '';
+  }
 
   // Color class for a cost metric against its benchmark.
   // green < bench, yellow < 1.5×bench, red ≥ 1.5×bench.
@@ -591,43 +637,52 @@
     const ml = state.mailerlite || {};
     const summary = m.summary || {};
 
-    const spend = summary.spend;
+    // Meta returns spend in the ad account's currency (COP). Convert to USD
+    // for all display values, benchmarks, and status comparisons.
+    const spendCop = summary.spend;
+    const spendUsd = copToUsd(spendCop);
     const clicks = summary.clicks ?? 0;
     const impressions = summary.impressions ?? 0;
     const freeSubs = ml.subscribers?.freeInRange;
     const paidSubs = ml.subscribers?.paidInRange;
 
-    // Spend card — no benchmark, always neutral.
+    // Spend card — no benchmark, always neutral. USD primary, COP secondary.
     if (m.error) {
       setCard('spend', '—', m.error, { isError: true, card: 'spend' });
+      setSecondary('spend', '');
     } else {
-      setCard('spend', fmt.money(spend), `${fmt.int(clicks)} clicks · ${fmt.int(impressions)} impr.`, { card: 'spend' });
+      setCard('spend', fmt.usd(spendUsd), `${fmt.int(clicks)} clicks · ${fmt.int(impressions)} impr.`, { card: 'spend' });
+      setSecondary('spend', Number.isFinite(spendCop) ? fmt.cop(spendCop) : '');
     }
 
-    // Free subs — no benchmark.
+    // Free subs — no benchmark, no secondary currency (it's a count).
     if (ml.error) {
       setCard('free-subs', '—', ml.error, { isError: true, card: 'free-subs' });
     } else {
       setCard('free-subs', fmt.int(freeSubs), 'new in range', { card: 'free-subs' });
     }
 
-    // Cost / Free Sub — green <$2, yellow <$3, red ≥$3. "—" when denom is 0.
-    const cpFree = (Number.isFinite(spend) && freeSubs > 0) ? spend / freeSubs : null;
+    // Cost / Free Sub — benchmark in USD. COP / subs = COP/sub, then convert.
+    const cpFreeCop = (Number.isFinite(spendCop) && freeSubs > 0) ? spendCop / freeSubs : null;
+    const cpFreeUsd = cpFreeCop != null ? copToUsd(cpFreeCop) : null;
     setCard(
       'cost-free',
-      cpFree != null ? fmt.money(cpFree) : '—',
-      `benchmark < ${fmt.money(BENCH.costPerFree)}`,
-      { card: 'cost-free', color: costClass(cpFree, BENCH.costPerFree) }
+      cpFreeUsd != null ? fmt.usd(cpFreeUsd) : '—',
+      `benchmark < ${fmt.usd(BENCH.costPerFree)}`,
+      { card: 'cost-free', color: costClass(cpFreeUsd, BENCH.costPerFree) }
     );
+    setSecondary('cost-free', cpFreeCop != null ? fmt.cop(cpFreeCop) : '');
 
-    // Cost / Paid — green <$30, yellow <$45, red ≥$45. "—" when no paid subs.
-    const cpPaid = (Number.isFinite(spend) && paidSubs > 0) ? spend / paidSubs : null;
+    // Cost / Paid — benchmark in USD.
+    const cpPaidCop = (Number.isFinite(spendCop) && paidSubs > 0) ? spendCop / paidSubs : null;
+    const cpPaidUsd = cpPaidCop != null ? copToUsd(cpPaidCop) : null;
     setCard(
       'cost-paid',
-      cpPaid != null ? fmt.money(cpPaid) : '—',
-      `benchmark < ${fmt.money(BENCH.costPerPaid)}`,
-      { card: 'cost-paid', color: costClass(cpPaid, BENCH.costPerPaid) }
+      cpPaidUsd != null ? fmt.usd(cpPaidUsd) : '—',
+      `benchmark < ${fmt.usd(BENCH.costPerPaid)}`,
+      { card: 'cost-paid', color: costClass(cpPaidUsd, BENCH.costPerPaid) }
     );
+    setSecondary('cost-paid', cpPaidCop != null ? fmt.cop(cpPaidCop) : '');
 
     renderFunnel();
     renderAdTable();
@@ -764,15 +819,18 @@
         </tr></thead>
         <tbody>
           ${rows.map(r => {
-            const s = statusFor(r.cps, r.subs, r.clicks);
+            // r.spend / r.cps come from Meta in COP. statusFor compares against
+            // a USD benchmark, so convert cps → USD before classifying.
+            const cpsUsd = Number.isFinite(r.cps) ? copToUsd(r.cps) : r.cps;
+            const s = statusFor(cpsUsd, r.subs, r.clicks);
             return `
               <tr>
                 <td>${escapeHtml(r[firstColField])}</td>
                 <td class="num">${fmt.int(r.clicks)}</td>
                 <td class="num">${fmt.pct(r.ctr)}</td>
-                <td class="num">${fmt.money(r.spend)}</td>
+                <td class="num">${fmt.dualInline(r.spend)}</td>
                 <td class="num">${fmt.int(r.subs)}</td>
-                <td class="num">${Number.isFinite(r.cps) ? fmt.money(r.cps) : '—'}</td>
+                <td class="num">${Number.isFinite(r.cps) ? fmt.dualInline(r.cps) : '—'}</td>
                 <td class="status"><span class="pill ${s.cls}">${s.label}</span></td>
               </tr>
             `;
@@ -870,7 +928,10 @@
     const summary = m.summary || {};
     const rows = [['section', 'key', 'value']];
     rows.push(['range', 'selected', state.range]);
-    rows.push(['summary', 'spend', summary.spend ?? '']);
+    // spend_cop = raw Meta value (ad account currency). spend_usd = converted
+    // at COP_PER_USD for cross-benchmark comparisons. cpc/cpm stay COP.
+    rows.push(['summary', 'spend_cop', summary.spend ?? '']);
+    rows.push(['summary', 'spend_usd', Number.isFinite(summary.spend) ? copToUsd(summary.spend).toFixed(2) : '']);
     rows.push(['summary', 'impressions', summary.impressions ?? '']);
     rows.push(['summary', 'clicks', summary.clicks ?? '']);
     rows.push(['summary', 'ctr', summary.ctr ?? '']);
@@ -880,10 +941,12 @@
     rows.push(['totals', 'free_subscribers', ml.subscribers?.free ?? '']);
     rows.push(['totals', 'paid_subscribers', ml.subscribers?.paid ?? '']);
     (m.byAd || []).forEach(a => {
-      rows.push(['ad', a.name, `spend=${a.spend};clicks=${a.clicks};ctr=${a.ctr};subs=${(ml.byAd || {})[a.name] || 0}`]);
+      const spendUsd = Number.isFinite(a.spend) ? copToUsd(a.spend).toFixed(2) : '';
+      rows.push(['ad', a.name, `spend_cop=${a.spend};spend_usd=${spendUsd};clicks=${a.clicks};ctr=${a.ctr};subs=${(ml.byAd || {})[a.name] || 0}`]);
     });
     (m.byPlacement || []).forEach(p => {
-      rows.push(['placement', p.placement, `spend=${p.spend};clicks=${p.clicks};ctr=${p.ctr};subs=${(ml.byPlacement || {})[p.placement] || 0}`]);
+      const spendUsd = Number.isFinite(p.spend) ? copToUsd(p.spend).toFixed(2) : '';
+      rows.push(['placement', p.placement, `spend_cop=${p.spend};spend_usd=${spendUsd};clicks=${p.clicks};ctr=${p.ctr};subs=${(ml.byPlacement || {})[p.placement] || 0}`]);
     });
     const csv = rows.map(r => r.map(cell => {
       const s = String(cell ?? '');
