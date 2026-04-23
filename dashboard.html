@@ -438,8 +438,15 @@
     costPerPaid: 30,       // USD / paid sub
   };
   // Scale/Kill thresholds for the ad & placement tables.
+  // KILL_MIN_CLICKS = 50 because at a ~20% signup benchmark, 50 clicks
+  // should yield ~10 subs — seeing 0/50 is a 3σ event and real signal.
+  // Below 50 clicks, "zero subs" is indistinguishable from an unlucky draw,
+  // so everything stays Monitor until the sample is big enough to judge.
+  // KILL_MULTIPLIER = 2× benchmark ($4/sub vs $2 target) to kill only on
+  // clear underperformance rather than any miss.
   const WINNER_MIN_SUBS = 5;
-  const KILL_MIN_CLICKS = 10;
+  const KILL_MIN_CLICKS = 50;
+  const KILL_MULTIPLIER = 2.0;
 
   // Meta ad account bills in COP — approximate conversion for USD display.
   // Benchmark logic stays in USD; COP is display-only. Update this when
@@ -791,15 +798,29 @@
     return `rgb(${mix.join(',')})`;
   }
 
-  // Status = decision label for a single ad/placement row.
-  // 🟢 Scale — cost/sub < benchmark AND subs >= WINNER_MIN_SUBS
-  // 🔴 Kill  — cost/sub > 1.5× benchmark AND clicks >= KILL_MIN_CLICKS
-  // 🟡 Monitor — otherwise (or when cost/sub can't be computed)
+  // Status = decision label for a single ad/placement row. `cps` must be
+  // in USD (callers convert COP → USD before calling).
+  //
+  // Decision order matters: insufficient-sample check runs first. Below
+  // KILL_MIN_CLICKS we don't have enough signal to separate a bad ad from
+  // an unlucky draw, so everything is Monitor regardless of cps. Only
+  // once the click sample is big enough do we look at subs / cost-per-sub.
+  //
+  // 🟡 Monitor — clicks < KILL_MIN_CLICKS (not enough data to judge)
+  // 🔴 Kill    — clicks ≥ KILL_MIN_CLICKS AND (subs == 0 OR cps > 2× bench)
+  // 🟢 Scale   — subs ≥ WINNER_MIN_SUBS AND cps < bench
+  // 🟡 Monitor — otherwise
   function statusFor(cps, subs, clicks) {
+    if (!(clicks >= KILL_MIN_CLICKS)) {
+      return { cls: 'pill--monitor', label: '🟡 Monitor' };
+    }
+    if (subs === 0) {
+      return { cls: 'pill--kill', label: '🔴 Kill' };
+    }
     if (Number.isFinite(cps) && cps < BENCH.costPerFree && subs >= WINNER_MIN_SUBS) {
       return { cls: 'pill--scale', label: '🟢 Scale' };
     }
-    if ((!Number.isFinite(cps) || cps > BENCH.costPerFree * 1.5) && clicks >= KILL_MIN_CLICKS) {
+    if (Number.isFinite(cps) && cps > BENCH.costPerFree * KILL_MULTIPLIER) {
       return { cls: 'pill--kill', label: '🔴 Kill' };
     }
     return { cls: 'pill--monitor', label: '🟡 Monitor' };
