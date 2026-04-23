@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sleep Tight — Free Guide for Busy Professionals</title>
-<meta name="ext-resource-dependency" content="uploads/Sleep_Tight_Cover_Landscape.png" data-resource-id="bookCover" />
+<meta name="ext-resource-dependency" content="uploads/Sleep_Tight_Cover_Landing.png" data-resource-id="bookCover" />
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
@@ -267,12 +267,12 @@ function EmailForm({ btnStyle, onSuccess, dark = false, formId, thankYouId }) {
           onMouseEnter={e => { if (!loading) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 6px 20px rgba(212,168,67,0.4)'; }}}
           onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
         >
-          {loading ? 'Sending…' : 'Send it to me →'}
+          {loading ? 'Sending…' : 'Get My Free Copy →'}
         </button>
       </div>
       {error && <div style={{ color:'#e53e3e', fontSize:13, fontFamily:'Nunito', marginBottom:10 }}>{error}</div>}
       <p style={{ fontFamily:'Nunito', fontSize:13, color: dark ? '#6a7a8a' : '#7a8a9a', letterSpacing:'0.01em', textAlign: isMobile ? 'center' : 'left' }}>
-        Plus a 62-page guide for the nights breathing isn't enough.
+        Instant download. No spam. Unsubscribe anytime.
       </p>
     </form>
     <div id={thankYouId} style={{display:'none', padding:'16px'}}>
@@ -385,7 +385,7 @@ function App() {
         {isMobile && (
           <div style={{ width:'100%', display:'flex', justifyContent:'center' }}>
             <img
-              src={window.__resources?.bookCover || "uploads/Sleep_Tight_Cover_Landscape.png"}
+              src="uploads/Sleep_Tight_Cover_Landing.png"
               alt="Sleep Tight — Free Guide"
               style={{
                 width: '100%',
@@ -406,7 +406,7 @@ function App() {
             letterSpacing:'0.14em', textTransform:'uppercase',
             color: COLORS.gold, marginBottom:16,
             borderBottom: `2px solid ${COLORS.gold}`, paddingBottom:4,
-          }}>Free</div>
+          }}>Free Guide</div>
 
           <h1 style={{
             fontFamily:'Quicksand', fontWeight:700,
@@ -425,8 +425,10 @@ function App() {
             color:'#4a5a72', lineHeight:1.65, marginBottom:22,
             textWrap:'pretty',
           }}>
-            Try the 3-minute breathing pattern that quiets racing thoughts — in your inbox in 60 seconds.
+            A 62-page science-backed guide for busy professionals who can't shut their brain off at night.
           </p>
+
+          <StarRating show={tweaks.showStars} />
 
           <EmailForm btnStyle={tweaks.btnStyle} formId="signupFormHero" thankYouId="thankYouHero" />
         </div>
@@ -443,7 +445,7 @@ function App() {
             onMouseLeave={e => e.currentTarget.style.transform='rotate(1.5deg)'}
             >
               <img
-                src={window.__resources?.bookCover || "uploads/Sleep_Tight_Cover_Landscape.png"}
+                src="uploads/Sleep_Tight_Cover_Landing.png"
                 alt="Sleep Tight — Free Guide"
                 style={{
                   width: 'clamp(280px,38vw,480px)',
@@ -525,17 +527,17 @@ function App() {
         textAlign:'center',
       }}>
         <div style={{ maxWidth:560, margin:'0 auto' }}>
-          <div style={{ fontFamily:'Quicksand', fontWeight:700, fontSize:12, letterSpacing:'0.14em', textTransform:'uppercase', color:COLORS.gold, marginBottom:14 }}>Free</div>
+          <div style={{ fontFamily:'Quicksand', fontWeight:700, fontSize:12, letterSpacing:'0.14em', textTransform:'uppercase', color:COLORS.gold, marginBottom:14 }}>Free Download</div>
           <h2 style={{
             fontFamily:'Quicksand', fontWeight:700,
             fontSize: isMobile ? '28px' : 'clamp(26px,4vw,44px)',
             color:'#fff', marginBottom:14,
             letterSpacing:'-0.02em', lineHeight:1.15,
           }}>
-            Still running the 2am math?
+            Start sleeping better tonight
           </h2>
           <p style={{ fontFamily:'Nunito', fontSize: isMobile ? 15 : 16, color:'#8a9ab5', marginBottom:32, lineHeight:1.6 }}>
-            Start with the breathing pattern. If it works, the full system is yours.
+            Written by Luna Wells. 62 pages. Science-backed.
           </p>
           <EmailForm btnStyle={tweaks.btnStyle} dark formId="signupFormBottom" thankYouId="thankYouBottom" />
         </div>
