@@ -29,6 +29,56 @@ const { getDateRange, normalizeRange, utcToDashboardDate } = require('./_utils/d
 const cache = new Map(); // range -> { data, at }
 const CACHE_MS = 60 * 1000;
 
+// Canonical normalizers. Meta ad names are user-typed ("2am Math") while
+// the UTM value MailerLite sees is whatever we put in the URL template
+// ("2am_math"). Placements have two sources with different spellings:
+// Meta Insights API returns publisher_platform+platform_position strings
+// ("Facebook_Feed", "Instagram_Instagram_reels"); the {{placement}} URL
+// macro substitutes different tokens at click time ("Facebook_Mobile_Feed",
+// "Instagram_Reels"). Same file MUST also be mirrored in dashboard.html.
+function normalizeAdName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_');
+}
+
+const PLACEMENT_ALIASES = {
+  'facebook_mobile_feed': 'facebook_feed',
+  'facebook_desktop_feed': 'facebook_feed',
+  'facebook_feed': 'facebook_feed',
+  'facebook_facebook_reels': 'facebook_reels',
+  'facebook_reels': 'facebook_reels',
+  'facebook_facebook_stories': 'facebook_stories',
+  'facebook_stories': 'facebook_stories',
+  'facebook_marketplace': 'facebook_marketplace',
+  'facebook_right_column': 'facebook_right_column',
+  'facebook_video_feeds': 'facebook_video_feeds',
+  'facebook_search': 'facebook_search',
+  'instagram_feed': 'instagram_feed',
+  'instagram_stream': 'instagram_feed',
+  'instagram_stories': 'instagram_stories',
+  'instagram_story': 'instagram_stories',
+  'instagram_reels': 'instagram_reels',
+  'instagram_instagram_reels': 'instagram_reels',
+  'instagram_explore': 'instagram_explore',
+  'instagram_shop': 'instagram_shop',
+  'audience_network_classic': 'audience_network',
+  'audience_network_rewarded_video': 'audience_network',
+  'audience_network_instream_video': 'audience_network',
+  'messenger_messenger_inbox': 'messenger_inbox',
+  'messenger_inbox': 'messenger_inbox',
+  'messenger_messenger_stories': 'messenger_stories',
+  'messenger_stories': 'messenger_stories',
+};
+
+function normalizePlacement(s) {
+  const lower = String(s || '').toLowerCase().trim().replace(/\s+/g, '_');
+  return PLACEMENT_ALIASES[lower] || lower;
+}
+
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
@@ -55,11 +105,16 @@ module.exports = async (req, res) => {
     const freeInWindow = filterByRange(free, dashboardRange);
     const paidInWindow = filterByRange(paid, dashboardRange);
 
+    // Aggregate into canonical keys so the dashboard can join against
+    // normalized Meta ad names / placements (see normalizeAdName +
+    // normalizePlacement above).
     const byAd = {};
     const byPlacement = {};
     for (const s of freeInWindow) {
-      const ad = (s.fields && s.fields.utm_content) || 'unknown';
-      const placement = (s.fields && s.fields.utm_placement) || 'unknown';
+      const adRaw = (s.fields && s.fields.utm_content) || 'unknown';
+      const placementRaw = (s.fields && s.fields.utm_placement) || 'unknown';
+      const ad = normalizeAdName(adRaw);
+      const placement = normalizePlacement(placementRaw);
       byAd[ad] = (byAd[ad] || 0) + 1;
       byPlacement[placement] = (byPlacement[placement] || 0) + 1;
     }

@@ -454,6 +454,54 @@
   const COP_PER_USD = 4000;
   const copToUsd = (cop) => Number.isFinite(cop) ? cop / COP_PER_USD : NaN;
 
+  // Canonical normalizers — must stay in sync with api/mailerlite.js.
+  // Meta ad names are user-typed (e.g., "2am Math") and don't match the
+  // utm_content we embed in URLs ("2am_math"). Placements have two
+  // sources with different spellings: Meta Insights API returns names
+  // like "Facebook_Feed"/"Instagram_Instagram_reels"; the {{placement}}
+  // URL macro substitutes "Facebook_Mobile_Feed"/"Instagram_Reels" at
+  // click time. Both sides get normalized before joining.
+  function normalizeAdName(s) {
+    return String(s || '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_]/g, '')
+      .replace(/_+/g, '_');
+  }
+  const PLACEMENT_ALIASES = {
+    'facebook_mobile_feed': 'facebook_feed',
+    'facebook_desktop_feed': 'facebook_feed',
+    'facebook_feed': 'facebook_feed',
+    'facebook_facebook_reels': 'facebook_reels',
+    'facebook_reels': 'facebook_reels',
+    'facebook_facebook_stories': 'facebook_stories',
+    'facebook_stories': 'facebook_stories',
+    'facebook_marketplace': 'facebook_marketplace',
+    'facebook_right_column': 'facebook_right_column',
+    'facebook_video_feeds': 'facebook_video_feeds',
+    'facebook_search': 'facebook_search',
+    'instagram_feed': 'instagram_feed',
+    'instagram_stream': 'instagram_feed',
+    'instagram_stories': 'instagram_stories',
+    'instagram_story': 'instagram_stories',
+    'instagram_reels': 'instagram_reels',
+    'instagram_instagram_reels': 'instagram_reels',
+    'instagram_explore': 'instagram_explore',
+    'instagram_shop': 'instagram_shop',
+    'audience_network_classic': 'audience_network',
+    'audience_network_rewarded_video': 'audience_network',
+    'audience_network_instream_video': 'audience_network',
+    'messenger_messenger_inbox': 'messenger_inbox',
+    'messenger_inbox': 'messenger_inbox',
+    'messenger_messenger_stories': 'messenger_stories',
+    'messenger_stories': 'messenger_stories',
+  };
+  function normalizePlacement(s) {
+    const lower = String(s || '').toLowerCase().trim().replace(/\s+/g, '_');
+    return PLACEMENT_ALIASES[lower] || lower;
+  }
+
   const state = { meta: null, mailerlite: null, analytics: null, email: null, config: null, range: getInitialRange() };
 
   function getInitialRange() {
@@ -868,7 +916,7 @@
     if (m.error) { wrap.innerHTML = `<div class="error">${escapeHtml(m.error)}</div>`; return; }
     const adSubs = ml.byAd || {};
     const rows = (m.byAd || []).map(ad => {
-      const subs = adSubs[ad.name] || 0;
+      const subs = adSubs[normalizeAdName(ad.name)] || 0;
       const cps = subs > 0 ? ad.spend / subs : Infinity;
       return { ...ad, subs, cps };
     });
@@ -885,7 +933,7 @@
     if (m.error) { wrap.innerHTML = `<div class="error">${escapeHtml(m.error)}</div>`; return; }
     const placementSubs = ml.byPlacement || {};
     const rows = (m.byPlacement || []).map(p => {
-      const subs = placementSubs[p.placement] || 0;
+      const subs = placementSubs[normalizePlacement(p.placement)] || 0;
       const cps = subs > 0 ? p.spend / subs : Infinity;
       return { ...p, subs, cps };
     });
@@ -963,11 +1011,11 @@
     rows.push(['totals', 'paid_subscribers', ml.subscribers?.paid ?? '']);
     (m.byAd || []).forEach(a => {
       const spendUsd = Number.isFinite(a.spend) ? copToUsd(a.spend).toFixed(2) : '';
-      rows.push(['ad', a.name, `spend_cop=${a.spend};spend_usd=${spendUsd};clicks=${a.clicks};ctr=${a.ctr};subs=${(ml.byAd || {})[a.name] || 0}`]);
+      rows.push(['ad', a.name, `spend_cop=${a.spend};spend_usd=${spendUsd};clicks=${a.clicks};ctr=${a.ctr};subs=${(ml.byAd || {})[normalizeAdName(a.name)] || 0}`]);
     });
     (m.byPlacement || []).forEach(p => {
       const spendUsd = Number.isFinite(p.spend) ? copToUsd(p.spend).toFixed(2) : '';
-      rows.push(['placement', p.placement, `spend_cop=${p.spend};spend_usd=${spendUsd};clicks=${p.clicks};ctr=${p.ctr};subs=${(ml.byPlacement || {})[p.placement] || 0}`]);
+      rows.push(['placement', p.placement, `spend_cop=${p.spend};spend_usd=${spendUsd};clicks=${p.clicks};ctr=${p.ctr};subs=${(ml.byPlacement || {})[normalizePlacement(p.placement)] || 0}`]);
     });
     const csv = rows.map(r => r.map(cell => {
       const s = String(cell ?? '');
