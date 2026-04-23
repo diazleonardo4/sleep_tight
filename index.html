@@ -4,7 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sleep Tight — Free Guide for Busy Professionals</title>
-<meta name="ext-resource-dependency" content="uploads/Sleep_Tight_Cover_Landing.png" data-resource-id="bookCover" />
+<meta name="ext-resource-dependency" content="Sleep_Tight_Cover_Landing.webp" data-resource-id="bookCover" />
+<!--
+  Preload the hero book cover. Meta ad traffic is 90%+ mobile and this
+  image is the LCP element — prioritizing it shaves ~500–1000ms off
+  largest-contentful-paint on slow 4G. Media queries match the React
+  isMobile threshold (< 768px) so only one WebP is fetched per viewport.
+-->
+<link rel="preload" as="image" href="/Sleep_Tight_Cover_Landing_mobile.webp" type="image/webp" media="(max-width: 767px)" fetchpriority="high" />
+<link rel="preload" as="image" href="/Sleep_Tight_Cover_Landing.webp" type="image/webp" media="(min-width: 768px)" fetchpriority="high" />
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
@@ -381,15 +389,23 @@ function App() {
         gap: isMobile ? 32 : 48,
         textAlign: isCentered ? 'center' : 'left',
       }}>
-        {/* Book cover — on mobile shows ABOVE text */}
+        {/* Book cover — on mobile shows ABOVE text. LCP element: eager
+            fetch + high priority so the browser treats it like it would
+            a `<link rel=preload>` match (which we also ship in <head>). */}
         {isMobile && (
           <div style={{ width:'100%', display:'flex', justifyContent:'center' }}>
             <img
-              src="uploads/Sleep_Tight_Cover_Landing.png"
-              alt="Sleep Tight — Free Guide"
+              src="/Sleep_Tight_Cover_Landing_mobile.webp"
+              alt="Sleep Tight — science of falling asleep fast, by Luna Wells"
+              width="400"
+              height="520"
+              loading="eager"
+              fetchPriority="high"
+              decoding="async"
               style={{
                 width: '100%',
                 maxWidth: 200,
+                height: 'auto',
                 borderRadius: 14,
                 display:'block',
                 boxShadow: '0 16px 48px rgba(26,39,68,0.22)',
@@ -445,11 +461,17 @@ function App() {
             onMouseLeave={e => e.currentTarget.style.transform='rotate(1.5deg)'}
             >
               <img
-                src="uploads/Sleep_Tight_Cover_Landing.png"
-                alt="Sleep Tight — Free Guide"
+                src="/Sleep_Tight_Cover_Landing.webp"
+                alt="Sleep Tight — science of falling asleep fast, by Luna Wells"
+                width="600"
+                height="780"
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
                 style={{
                   width: 'clamp(280px,38vw,480px)',
                   maxWidth: 480,
+                  height: 'auto',
                   borderRadius: 16,
                   display:'block',
                 }}
