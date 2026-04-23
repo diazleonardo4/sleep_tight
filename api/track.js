@@ -25,6 +25,18 @@ const VALID_EVENTS = new Set([
   'exit_intent',
 ]);
 
+// Internal / test visitor_ids (Leo + Claude + any QA devices). Populated
+// from the INTERNAL_VISITOR_IDS env var — comma-separated list. Events
+// from these ids are dropped at ingest so dashboard metrics reflect
+// real traffic only. Cached at module scope so warm invocations don't
+// re-parse the env var per request.
+const INTERNAL_VISITOR_IDS = new Set(
+  (process.env.INTERNAL_VISITOR_IDS || '')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean)
+);
+
 const EVENT_TTL = 60 * 60 * 24 * 90;   // 90 days
 const COUNTER_TTL = 60 * 60 * 24 * 365; // 365 days
 const MAX_BATCH = 50;
@@ -57,12 +69,23 @@ module.exports = async (req, res) => {
   }
 
   // Validate every event up front; reject the whole batch if any are bad.
-  const events = [];
+  const validated = [];
   for (const e of rawEvents) {
     if (!e || typeof e !== 'object') return res.status(400).json({ error: 'Invalid event' });
     const name = String(e.event || '');
     if (!VALID_EVENTS.has(name)) return res.status(400).json({ error: 'Invalid event' });
-    events.push(e);
+    validated.push(e);
+  }
+
+  // Drop internal/test events before any Redis write. If the whole batch
+  // is internal we short-circuit with 204 so the client still sees success
+  // — no counters incremented, no rate-limit token burned either.
+  const events = validated.filter(e => {
+    const vid = cleanId(e.visitor_id, 40);
+    return !(vid && INTERNAL_VISITOR_IDS.has(vid));
+  });
+  if (events.length === 0) {
+    return res.status(204).end();
   }
 
   const ip = clientIp(req);

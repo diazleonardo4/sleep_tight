@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>My Visitor ID</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 40px 20px;
+      text-align: center;
+      background: #FDF6EC;
+      color: #1A2744;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+    h2 { margin-top: 0; }
+    .id {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 20px;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      word-break: break-all;
+      margin: 20px 0;
+      border: 1px solid rgba(26, 39, 68, 0.1);
+    }
+    button {
+      background: #D4A843;
+      color: #1A2744;
+      border: 0;
+      padding: 14px 28px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:active { opacity: 0.8; }
+    .note {
+      margin-top: 24px;
+      font-size: 13px;
+      color: rgba(26, 39, 68, 0.6);
+      line-height: 1.5;
+    }
+    code {
+      background: rgba(26, 39, 68, 0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Your visitor_id on this device</h2>
+  <div class="id" id="vid">loading&hellip;</div>
+  <button id="copy">Copy</button>
+  <p class="note">
+    Add this to the <code>INTERNAL_VISITOR_IDS</code> env var in Vercel
+    to exclude this device from analytics.
+  </p>
+  <script>
+    var vid = null;
+    try { vid = localStorage.getItem('st_vid'); } catch (_) { /* storage blocked */ }
+    var el = document.getElementById('vid');
+    el.textContent = vid || 'not set — visit the main landing page first, then come back';
+
+    document.getElementById('copy').addEventListener('click', function (e) {
+      if (!vid) return;
+      var btn = e.currentTarget;
+      var restore = function () { btn.textContent = 'Copy'; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(vid).then(function () {
+          btn.textContent = 'Copied!';
+          setTimeout(restore, 2000);
+        }).catch(function () {
+          btn.textContent = 'Copy failed — select manually';
+          setTimeout(restore, 2500);
+        });
+      } else {
+        btn.textContent = 'Clipboard unavailable — select manually';
+        setTimeout(restore, 2500);
+      }
+    });
+  </script>
+</body>
+</html>
