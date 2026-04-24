@@ -310,6 +310,12 @@
   window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
 </script>
 <script defer src="/_vercel/insights/script.js"></script>
+
+<!-- Meta Pixel — base code + PageView. The Pixel ID is injected server-
+     side from META_PIXEL_ID (see /api/pixel.js). If the env var is
+     unset the endpoint returns an empty body and fbq stays undefined,
+     so the form handler's typeof-checks skip cleanly. -->
+<script async src="/api/pixel.js"></script>
 </head>
 <body>
 
@@ -516,6 +522,19 @@
         }
         emailInput.classList.remove('is-invalid');
 
+        // Meta Pixel — intent signal. Fires on every valid-email submit,
+        // regardless of whether MailerLite eventually succeeds. Paired
+        // with the Lead event below; the gap between them reveals
+        // MailerLite / network failures. No PII in params.
+        if (typeof fbq === 'function') {
+          fbq('track', 'SubmitApplication', {
+            content_name: 'Sleep Tight Free Guide',
+            content_category: 'lead_magnet_attempt',
+            value: 0,
+            currency: 'USD'
+          });
+        }
+
         submitBtn.disabled = true;
         submitBtn.textContent = 'Sending…';
 
@@ -554,6 +573,18 @@
                 });
               }
               if (window.trackEvent) window.trackEvent('form_submit_success', { form: form.id });
+              // Meta Pixel — outcome signal (the event we optimize the
+              // Leads campaign against). Only fires after MailerLite
+              // confirms the subscription, so the number matches real
+              // subscribers, not attempts.
+              if (typeof fbq === 'function') {
+                fbq('track', 'Lead', {
+                  content_name: 'Sleep Tight Free Guide',
+                  content_category: 'lead_magnet',
+                  value: 0,
+                  currency: 'USD'
+                });
+              }
             } else {
               throw new Error((data && data.message) || 'Subscription failed');
             }
