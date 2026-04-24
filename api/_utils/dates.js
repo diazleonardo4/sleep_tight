@@ -1,74 +1,103 @@
-// Shared timezone + date-range helpers for all dashboard endpoints.
+// Shared timezone + date-range helpers for the dashboard side of the app.
 //
-// The dashboard has ONE canonical timezone (DASHBOARD_TIMEZONE env var,
-// default America/Bogota). All "today / 7d / 30d" math happens in that
-// zone. When an external service uses a different zone (e.g. Meta ad
-// account TZ), translate the boundaries on the way out.
+// Single source of truth: process.env.DASHBOARD_TIMEZONE. Read ONCE at
+// module scope. No hardcoded fallback — a missing env var throws so the
+// failure mode is loud instead of silently producing plausible-looking
+// wrong data.
 //
-// NEVER use `new Date().toISOString().slice(0,10)` for date bucketing in
-// the dashboard — it gives a UTC date, which is wrong for anyone not on
-// UTC. Always go through these helpers.
+// Everything timezone-dependent in the dashboard ingest + aggregation
+// path flows through this module. Meta's ad-account timezone is handled
+// separately in ./meta-tz.js; translate between the two ONLY at the
+// Meta API boundary (see api/meta.js).
+//
+// NEVER use `new Date().toISOString().slice(0,10)` for date bucketing.
+// That gives a UTC date, which is wrong for anyone not on UTC. Always
+// go through these helpers.
 
-const DASHBOARD_TZ = process.env.DASHBOARD_TIMEZONE || 'America/Bogota';
+const DASHBOARD_TZ = process.env.DASHBOARD_TIMEZONE;
+if (!DASHBOARD_TZ) {
+  throw new Error(
+    'DASHBOARD_TIMEZONE env var is required (IANA name, e.g. America/Bogota). ' +
+    'Set it in Vercel → Project → Settings → Environment Variables.'
+  );
+}
 
+// Range identifiers the dashboard UI + URL params use. Kept short for
+// compact URLs / session storage. getDateRange also accepts the verbose
+// aliases listed below so callers can use either form.
 const VALID_RANGES = ['today', '7d', '30d'];
 
-// Returns today's date in the dashboard timezone as YYYY-MM-DD.
+function getDashboardTimezone() {
+  return DASHBOARD_TZ;
+}
+
 function todayInDashboardTZ() {
   return formatInTZ(new Date(), DASHBOARD_TZ);
 }
 
-// Returns the date N days ago (from now) in dashboard TZ as YYYY-MM-DD.
 function daysAgoInDashboardTZ(days) {
   return formatInTZ(new Date(Date.now() - days * 86400000), DASHBOARD_TZ);
 }
 
-// Given a UTC Date or ISO string, returns the date it falls on in
-// dashboard TZ as YYYY-MM-DD.
+// Given a UTC Date, ISO string, or epoch ms, returns the date it falls
+// on in dashboard TZ as YYYY-MM-DD.
 function utcToDashboardDate(utc) {
-  return formatInTZ(utc instanceof Date ? utc : new Date(utc), DASHBOARD_TZ);
+  const d = utc instanceof Date
+    ? utc
+    : (typeof utc === 'number' ? new Date(utc) : new Date(utc));
+  return formatInTZ(d, DASHBOARD_TZ);
 }
 
-// Converts a YYYY-MM-DD date (interpreted in dashboard TZ) to a UTC Date
-// representing the START of that day in the dashboard TZ.
-function dashboardDateToUTCStart(dateStr) {
-  return zonedDateToUTC(dateStr, DASHBOARD_TZ);
+// For a YYYY-MM-DD interpreted in dashboard TZ, return the epoch ms
+// boundaries of that calendar day. startMs is midnight-in-dashboard-TZ;
+// endMs is startMs + 24h (exclusive upper bound — the next day's midnight).
+// Callers that want the last millisecond in the window should use endMs - 1.
+function getDashboardDayBoundaries(dateStr) {
+  const startMs = zonedDateToUTC(dateStr, DASHBOARD_TZ).getTime();
+  return { startMs, endMs: startMs + 86400000 };
 }
 
-// Same for END of the day (exclusive-ish: last millisecond of the day).
-function dashboardDateToUTCEnd(dateStr) {
-  return new Date(dashboardDateToUTCStart(dateStr).getTime() + 86400000 - 1);
-}
-
-// Standard range resolver used by all endpoints. Inclusive of today.
+// Standard range resolver used by every endpoint. Returns dashboard-TZ
+// YYYY-MM-DD strings (inclusive both ends — `until` is today for 7d/30d).
+//
+// Accepts:
+//   today | yesterday | 7d | 30d | last_7_days | last_30_days
+// Unknown values fall back to 7d.
 function getDateRange(range) {
   const r = normalizeRange(range);
-  const until = todayInDashboardTZ();
-  if (r === 'today') return { since: until, until };
+  const today = todayInDashboardTZ();
+  if (r === 'today') return { since: today, until: today };
+  if (r === 'yesterday') {
+    const y = daysAgoInDashboardTZ(1);
+    return { since: y, until: y };
+  }
   const days = r === '30d' ? 29 : 6;
-  return { since: daysAgoInDashboardTZ(days), until };
+  return { since: daysAgoInDashboardTZ(days), until: today };
 }
+
+const INTERNAL_RANGES = new Set(['today', 'yesterday', '7d', '30d']);
 
 function normalizeRange(range) {
-  const r = String(range || '7d').toLowerCase();
-  return VALID_RANGES.includes(r) ? r : '7d';
+  const raw = String(range || '7d').toLowerCase();
+  const r = raw === 'last_7_days' ? '7d'
+          : raw === 'last_30_days' ? '30d'
+          : raw;
+  return INTERNAL_RANGES.has(r) ? r : '7d';
 }
 
-// Format a Date as YYYY-MM-DD in a given timezone.
+// Format a Date as YYYY-MM-DD in a given timezone. en-CA gives ISO order.
 function formatInTZ(date, tz) {
-  // en-CA locale gives ISO-like YYYY-MM-DD ordering.
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(date);
 }
 
-// Convert a YYYY-MM-DD (interpreted at 00:00 in the given TZ) to a UTC Date.
-// Works regardless of what timezone the server itself runs in (Vercel = UTC).
+// Convert a YYYY-MM-DD (interpreted at 00:00 in the given TZ) to a UTC
+// Date. Works regardless of what timezone the server itself runs in
+// (Vercel runs in UTC). Uses Intl for the offset math — no hardcoded
+// offsets, no Date.prototype.getTimezoneOffset.
 function zonedDateToUTC(dateStr, tz) {
-  // Start with the date as if it were UTC midnight. Then figure out what
-  // that same wall-clock instant prints as in the target TZ, and use the
-  // delta to shift into the true UTC instant for midnight-in-TZ.
   const asUTCGuess = new Date(`${dateStr}T00:00:00Z`);
   const zoned = new Date(asUTCGuess.toLocaleString('en-US', { timeZone: tz }));
   const utc = new Date(asUTCGuess.toLocaleString('en-US', { timeZone: 'UTC' }));
@@ -76,29 +105,13 @@ function zonedDateToUTC(dateStr, tz) {
   return new Date(asUTCGuess.getTime() + offsetMs);
 }
 
-// Convert a dashboard-TZ date range to the equivalent range expressed in
-// another timezone. Used when calling an external service whose date
-// buckets are in a different zone (e.g. Meta ad account TZ).
-function rangeInTZ(range, targetTZ) {
-  const { since, until } = getDateRange(range);
-  if (!targetTZ || targetTZ === DASHBOARD_TZ) return { since, until };
-  const sinceUTC = dashboardDateToUTCStart(since);
-  const untilUTC = dashboardDateToUTCEnd(until);
-  return {
-    since: formatInTZ(sinceUTC, targetTZ),
-    until: formatInTZ(untilUTC, targetTZ),
-  };
-}
-
 module.exports = {
-  DASHBOARD_TZ,
   VALID_RANGES,
   normalizeRange,
   getDateRange,
-  rangeInTZ,
+  getDashboardTimezone,
   todayInDashboardTZ,
   daysAgoInDashboardTZ,
   utcToDashboardDate,
-  dashboardDateToUTCStart,
-  dashboardDateToUTCEnd,
+  getDashboardDayBoundaries,
 };

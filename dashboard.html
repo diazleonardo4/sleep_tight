@@ -621,11 +621,15 @@
     const el = document.getElementById('headerCaption');
     if (!el) return;
     const tz = state.config?.timezone || 'UTC';
+    const metaTz = state.config?.metaTimezone;
     const nowInTz = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
       hour: 'numeric', minute: '2-digit', hour12: true,
     }).format(new Date());
-    el.textContent = `Timezone: ${tz}  ·  Last updated: ${nowInTz}`;
+    const parts = [`Timezone: ${tz}`];
+    if (metaTz) parts.push(`Meta account: ${metaTz}`);
+    parts.push(`Last updated: ${nowInTz}`);
+    el.textContent = parts.join('  ·  ');
   }
 
   // ---------- Formatters ----------
