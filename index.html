@@ -137,6 +137,10 @@
   .form-note {
     font-size: 13px; color: var(--muted); letter-spacing: 0.01em;
   }
+  /* Collapsed when empty — the element is retained in DOM so the submit
+     handler can render validation errors / success state into it, but
+     takes no vertical space at rest. */
+  .form-note:empty { display: none; }
   .form-note.is-error { color: var(--error); }
   .form-note.is-success {
     color: var(--navy); font-weight: 600; font-size: 15px;
@@ -314,9 +318,9 @@
           class="email-input"
           aria-label="Email address"
         />
-        <button type="submit" class="cta-button">Get My Free Copy →</button>
+        <button type="submit" class="cta-button">Get the techniques →</button>
       </div>
-      <p class="form-note">Instant download. No spam. Unsubscribe anytime.</p>
+      <p class="form-note"></p>
     </form>
   </div>
 
@@ -442,9 +446,9 @@
           class="email-input"
           aria-label="Email address"
         />
-        <button type="submit" class="cta-button">Get My Free Copy →</button>
+        <button type="submit" class="cta-button">Get the techniques →</button>
       </div>
-      <p class="form-note">Instant download. No spam. Unsubscribe anytime.</p>
+      <p class="form-note"></p>
     </form>
   </div>
 </section>
@@ -466,7 +470,7 @@
   (function () {
     var MAILERLITE_URL = 'https://assets.mailerlite.com/jsonp/2269010/forms/185326300296119357/subscribe';
     var EMAIL_RX = /\S+@\S+\.\S+/;
-    var ORIGINAL_BTN_TEXT = 'Get My Free Copy →';
+    var ORIGINAL_BTN_TEXT = 'Get the techniques →';
 
     function attachFormHandler(form) {
       form.addEventListener('submit', function (e) {
