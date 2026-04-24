@@ -149,6 +149,29 @@
   .email-form-dark .form-note.is-error { color: #ffb4b4; }
   .email-form-dark .form-note.is-success { color: #fff; }
 
+  /* Hero subhead — named-technique highlights. Longer line-height gives
+     the inline pill backgrounds room to breathe across wrapped lines. */
+  .hero__sub { line-height: 1.9; }
+  .hero__sub .marker {
+    background: rgba(212, 168, 67, 0.35);
+    color: #1A2744;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  /* Default (neutral) form-note style. Error/success class variants
+     above keep their color. Dark-form variant keeps its muted light
+     color via higher specificity. */
+  .form-note {
+    margin-top: 12px;
+    font-size: 0.9em;
+    color: #1A2744;
+    opacity: 0.7;
+    text-align: center;
+  }
+
   /* ---------- DIVIDER ---------- */
   .divider-wrap { max-width: 900px; margin: 0 auto; padding: 0 40px; }
   .divider { height: 1px; background: linear-gradient(90deg, transparent, #c8d4e0, transparent); }
@@ -304,7 +327,7 @@
   <div class="hero__text">
     <div class="eyebrow eyebrow--underline hero__eyebrow">Free Guide</div>
     <h1 class="hero__title">Still awake at 2am with your brain running?</h1>
-    <p class="hero__sub">6 techniques to quiet the 2am brain, including 4-2-6 breathing, the 20-minute rule, and the 2pm caffeine cutoff. Free, 62-page guide.</p>
+    <p class="hero__sub">6 techniques to quiet the 2am brain, including <span class="marker">4-2-6 breathing</span>, <span class="marker">the 20-minute rule</span>, and <span class="marker">the 2pm caffeine cutoff</span>.</p>
 
     <form class="email-form" id="signupFormHero" novalidate>
       <div class="email-form__row">
@@ -318,9 +341,9 @@
           class="email-input"
           aria-label="Email address"
         />
-        <button type="submit" class="cta-button">Get the techniques →</button>
+        <button type="submit" class="cta-button">Get the free techniques →</button>
       </div>
-      <p class="form-note"></p>
+      <p class="form-note">62-page guide, delivered by email</p>
     </form>
   </div>
 
@@ -446,9 +469,9 @@
           class="email-input"
           aria-label="Email address"
         />
-        <button type="submit" class="cta-button">Get the techniques →</button>
+        <button type="submit" class="cta-button">Get the free techniques →</button>
       </div>
-      <p class="form-note"></p>
+      <p class="form-note">62-page guide, delivered by email</p>
     </form>
   </div>
 </section>
@@ -470,7 +493,7 @@
   (function () {
     var MAILERLITE_URL = 'https://assets.mailerlite.com/jsonp/2269010/forms/185326300296119357/subscribe';
     var EMAIL_RX = /\S+@\S+\.\S+/;
-    var ORIGINAL_BTN_TEXT = 'Get the techniques →';
+    var ORIGINAL_BTN_TEXT = 'Get the free techniques →';
 
     function attachFormHandler(form) {
       form.addEventListener('submit', function (e) {
