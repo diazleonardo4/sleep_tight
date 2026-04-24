@@ -24,6 +24,11 @@
 //   byPlacement: [ { placement, spend, impressions, clicks, ctr } ]
 // }
 //
+// Note: `clicks` in every output object is Meta's `inline_link_clicks`
+// (landing-page clicks — what Meta Ads Manager reports as "Results"),
+// NOT the raw `clicks` field (which also counts likes, comments, post
+// expands, etc.). CTR and CPC are derived from link clicks on our side.
+//
 // Monetary values (spend, cpc, cpm) come back in the ad account's
 // currency — the dashboard handles display-side conversion.
 
@@ -52,7 +57,13 @@ module.exports = async (req, res) => {
   const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
   try {
-    const baseFields = 'spend,impressions,clicks,ctr,cpc,cpm,reach';
+    // Pull inline_link_clicks (Meta's "Results" in Ads Manager) instead of
+    // the raw `clicks` field. `clicks` counts every engagement — likes,
+    // comments, post-expands, profile clicks — which inflates CTR and
+    // deflates CPC vs. real landing-page traffic. We compute CTR/CPC from
+    // link clicks ourselves rather than asking Meta (its returned ctr/cpc
+    // are derived from raw clicks).
+    const baseFields = 'spend,impressions,inline_link_clicks,cpm,reach';
     const [summaryRows, perAdRows, perPlacementRows] = await Promise.all([
       fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}`),
       fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&${timeRangeParam}&limit=200`),
@@ -64,21 +75,31 @@ module.exports = async (req, res) => {
       timeRange,
       dashboardRange,
       summary: summarize(summaryRows),
-      byAd: perAdRows.map(r => ({
-        name: r.ad_name || 'unnamed',
-        spend: num(r.spend),
-        impressions: int(r.impressions),
-        clicks: int(r.clicks),
-        ctr: num(r.ctr),
-        cpc: num(r.cpc),
-      })),
-      byPlacement: perPlacementRows.map(r => ({
-        placement: placementKey(r),
-        spend: num(r.spend),
-        impressions: int(r.impressions),
-        clicks: int(r.clicks),
-        ctr: num(r.ctr),
-      })),
+      byAd: perAdRows.map(r => {
+        const spend = parseFloat(r.spend) || 0;
+        const impressions = int(r.impressions);
+        const linkClicks = int(r.inline_link_clicks);
+        return {
+          name: r.ad_name || 'unnamed',
+          spend: round2(spend),
+          impressions,
+          clicks: linkClicks,
+          ctr: impressions ? round2((linkClicks / impressions) * 100) : 0,
+          cpc: linkClicks ? round2(spend / linkClicks) : 0,
+        };
+      }),
+      byPlacement: perPlacementRows.map(r => {
+        const spend = parseFloat(r.spend) || 0;
+        const impressions = int(r.impressions);
+        const linkClicks = int(r.inline_link_clicks);
+        return {
+          placement: placementKey(r),
+          spend: round2(spend),
+          impressions,
+          clicks: linkClicks,
+          ctr: impressions ? round2((linkClicks / impressions) * 100) : 0,
+        };
+      }),
     };
 
     cache.set(range, { data, at: Date.now() });
@@ -116,15 +137,15 @@ async function fetchInsights(accountId, token, query) {
 function summarize(rows) {
   const spend = sum(rows, 'spend');
   const impressions = sum(rows, 'impressions');
-  const clicks = sum(rows, 'clicks');
+  const linkClicks = sum(rows, 'inline_link_clicks');
   const reach = sum(rows, 'reach');
   return {
     spend: round2(spend),
     impressions,
-    clicks,
+    clicks: linkClicks,
     reach,
-    ctr: impressions ? round2((clicks / impressions) * 100) : 0,
-    cpc: clicks ? round2(spend / clicks) : 0,
+    ctr: impressions ? round2((linkClicks / impressions) * 100) : 0,
+    cpc: linkClicks ? round2(spend / linkClicks) : 0,
     cpm: impressions ? round2((spend / impressions) * 1000) : 0,
   };
 }
