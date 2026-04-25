@@ -502,6 +502,10 @@
   const CAMPAIGN_DISPLAY_NAMES = {
     sleep_tight_traffic: 'Traffic',
     sleep_tight_lead_target: 'Leads',
+    // Older paused Leads-style campaign — kept as its own bucket (NOT
+    // aliased) so historical events don't pollute the active Leads
+    // numbers. Mirror of api/_utils/campaign-display.js.
+    sleep_tight_leadgen: 'Leadgen (paused)',
   };
   // Sentinel for "events without a utm_campaign" — kept in sync with
   // api/_utils/attribution.js. The picker treats this as a real value

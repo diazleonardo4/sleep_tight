@@ -8,6 +8,11 @@
 const CAMPAIGN_DISPLAY_NAMES = {
   sleep_tight_traffic: 'Traffic',
   sleep_tight_lead_target: 'Leads',
+  // Older Leads-style campaign that was paused — kept as a distinct
+  // bucket (NOT aliased into sleep_tight_lead_target) so historical
+  // attribution stays clean. The "(paused)" tag flags its status in
+  // the picker.
+  sleep_tight_leadgen: 'Leadgen (paused)',
 };
 
 // Empty / null utm_campaign means the visitor came in without a UTM tag —

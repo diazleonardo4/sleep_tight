@@ -26,13 +26,16 @@ function _slug(s) {
 
 const normalizeAdName = _slug;
 
-// Old / typo'd / draft utm_campaign values that should fold into a
-// canonical bucket. Keep the keys post-slug (lowercased + underscored)
-// so a single entry covers every casing variant of the source.
-const UTM_ALIASES = {
-  // Original draft name before "lead_target" was canonicalized.
-  sleep_tight_leadgen: 'sleep_tight_lead_target',
-};
+// Reserved for future typo-consolidation. Kept as an empty map (rather
+// than removed entirely) so callers don't need to branch on its
+// existence — normalizeCampaignName below always does the lookup.
+//
+// IMPORTANT: only add an entry here when two slugs are *the same
+// campaign* with different spellings. Distinct campaigns (e.g. an old
+// paused campaign and a new active one) MUST stay as separate buckets
+// even if their names look similar — merging them silently corrupts
+// historical attribution and inflates the surviving bucket's metrics.
+const UTM_ALIASES = {};
 
 // Empty/missing utm_campaign collapses to this sentinel for filtering.
 // Stored event payloads use null (not the sentinel) — the sentinel is
