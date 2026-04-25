@@ -156,6 +156,46 @@
   .subs-cell.is-strong { color: var(--gold); font-weight: 700; }
   .subs-cell.is-muted { color: var(--text-faint); }
 
+  /* "Where are visitors coming from?" — 2x2 grid of small per-dimension
+     tables (country / device / browser / os). Each card mirrors the
+     existing .panel look so it sits naturally beside the campaign +
+     winner tables; on narrow viewports the grid collapses to a single
+     column so each table keeps full width. */
+  .dim-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px;
+  }
+  @media (max-width: 720px) {
+    .dim-grid { grid-template-columns: 1fr; }
+  }
+  .dim-card {
+    background: #fff; border-radius: 14px; padding: 16px 18px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  .dim-card__title {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 12px;
+    letter-spacing: 0.10em; text-transform: uppercase;
+    color: var(--text-faint); margin-bottom: 10px;
+  }
+  .dim-card table { width: 100%; border-collapse: collapse; }
+  .dim-card thead th {
+    font-family: 'Quicksand', sans-serif; font-weight: 600;
+    font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--text-muted); text-align: right;
+    padding: 6px 4px; border-bottom: 1px solid var(--border);
+  }
+  .dim-card thead th:first-child { text-align: left; }
+  .dim-card tbody td {
+    padding: 7px 4px; font-size: 13px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  .dim-card tbody td.num { text-align: right; }
+  .dim-card tbody tr:last-child td { border-bottom: none; }
+  .dim-card tr.row--winner { background: var(--gold-soft); }
+  .dim-card__empty {
+    padding: 18px 0; color: var(--text-faint); font-size: 13px;
+    text-align: center;
+  }
+
   /* ---------- SECTIONS & CARDS ---------- */
   .section { margin-bottom: 36px; }
   .section__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
@@ -471,6 +511,15 @@
     </div>
   </div>
 
+  <!-- LAYER 3d — VISITOR DIMENSIONS (country / device / browser / os) -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Where are visitors coming from?</h2>
+      <span class="eyebrow" id="dimRangeLabel">last 7 days</span>
+    </div>
+    <div class="dim-grid" id="dimGrid"><div class="empty">Loading…</div></div>
+  </div>
+
   <!-- LAYER 3c — EMAIL ENGAGEMENT -->
   <div class="section">
     <div class="section__head">
@@ -629,6 +678,8 @@
     else url.searchParams.delete('campaign');
     history.replaceState(null, '', url.toString());
     updateCampaignUi();
+    // Refresh eyebrow labels that include the campaign name (e.g. dim grid).
+    updateRangeUi();
     refreshAll();
   }
 
@@ -642,6 +693,11 @@
     document.getElementById('placementTableRangeLabel').textContent = `sorted by $ / sub · ${RANGE_LABELS[state.range]}`;
     const campaignLabel = document.getElementById('campaignTableRangeLabel');
     if (campaignLabel) campaignLabel.textContent = `sorted by subs · ${RANGE_LABELS[state.range]}`;
+    const dimLabel = document.getElementById('dimRangeLabel');
+    if (dimLabel) {
+      const suffix = state.campaign ? ` · ${campaignDisplay(state.campaign)}` : '';
+      dimLabel.textContent = `${RANGE_LABELS[state.range]}${suffix}`;
+    }
   }
 
   // Picker is rebuilt every refresh from /api/campaigns — the source of
@@ -924,6 +980,7 @@
     renderCampaignTable();
     renderAdTable();
     renderPlacementTable();
+    renderDimensionTables();
     renderEmailPanel();
   }
 
@@ -1234,6 +1291,123 @@
     rows.sort((a, b) => a.cps - b.cps);
     if (!rows.length) { wrap.innerHTML = `<div class="empty">No placement data yet for ${RANGE_LABELS[state.range]}.</div>`; return; }
     wrap.innerHTML = winnerTable(rows, 'Placement', 'placement');
+  }
+
+  // ---------- Visitor dimension tables ----------
+  // Renders 4 small tables (country / device / browser / os) in a 2x2
+  // grid below the placement breakdown. Data comes from the analytics
+  // endpoint (state.analytics.byCountry/byBrowser/byOs/byDevice). Each
+  // row is { value, pageviews, unique_visitors, engaged, engagement_rate, subs }.
+  // Columns shown: value | pageviews | engaged | engagement %. Rows
+  // with subs > 0 are highlighted in gold (the .row--winner style)
+  // since they're the buckets that actually converted.
+  //
+  // Country codes are rendered as flag-emoji + readable name. We only
+  // list the countries we actually see traffic from to keep the table
+  // small; anything missing falls back to the raw ISO code.
+  const COUNTRY_LOOKUP = {
+    AR: { name: 'Argentina',      flag: '\uD83C\uDDE6\uD83C\uDDF7' },
+    AU: { name: 'Australia',      flag: '\uD83C\uDDE6\uD83C\uDDFA' },
+    BR: { name: 'Brazil',         flag: '\uD83C\uDDE7\uD83C\uDDF7' },
+    CA: { name: 'Canada',         flag: '\uD83C\uDDE8\uD83C\uDDE6' },
+    CH: { name: 'Switzerland',    flag: '\uD83C\uDDE8\uD83C\uDDED' },
+    CL: { name: 'Chile',          flag: '\uD83C\uDDE8\uD83C\uDDF1' },
+    CO: { name: 'Colombia',       flag: '\uD83C\uDDE8\uD83C\uDDF4' },
+    DE: { name: 'Germany',        flag: '\uD83C\uDDE9\uD83C\uDDEA' },
+    DK: { name: 'Denmark',        flag: '\uD83C\uDDE9\uD83C\uDDF0' },
+    EC: { name: 'Ecuador',        flag: '\uD83C\uDDEA\uD83C\uDDE8' },
+    ES: { name: 'Spain',          flag: '\uD83C\uDDEA\uD83C\uDDF8' },
+    FR: { name: 'France',         flag: '\uD83C\uDDEB\uD83C\uDDF7' },
+    GB: { name: 'United Kingdom', flag: '\uD83C\uDDEC\uD83C\uDDE7' },
+    IE: { name: 'Ireland',        flag: '\uD83C\uDDEE\uD83C\uDDEA' },
+    IN: { name: 'India',          flag: '\uD83C\uDDEE\uD83C\uDDF3' },
+    IT: { name: 'Italy',          flag: '\uD83C\uDDEE\uD83C\uDDF9' },
+    JP: { name: 'Japan',          flag: '\uD83C\uDDEF\uD83C\uDDF5' },
+    MX: { name: 'Mexico',         flag: '\uD83C\uDDF2\uD83C\uDDFD' },
+    NL: { name: 'Netherlands',    flag: '\uD83C\uDDF3\uD83C\uDDF1' },
+    NO: { name: 'Norway',         flag: '\uD83C\uDDF3\uD83C\uDDF4' },
+    NZ: { name: 'New Zealand',    flag: '\uD83C\uDDF3\uD83C\uDDFF' },
+    PE: { name: 'Peru',           flag: '\uD83C\uDDF5\uD83C\uDDEA' },
+    PH: { name: 'Philippines',    flag: '\uD83C\uDDF5\uD83C\uDDED' },
+    PL: { name: 'Poland',         flag: '\uD83C\uDDF5\uD83C\uDDF1' },
+    PT: { name: 'Portugal',       flag: '\uD83C\uDDF5\uD83C\uDDF9' },
+    SE: { name: 'Sweden',         flag: '\uD83C\uDDF8\uD83C\uDDEA' },
+    UY: { name: 'Uruguay',        flag: '\uD83C\uDDFA\uD83C\uDDFE' },
+    US: { name: 'United States',  flag: '\uD83C\uDDFA\uD83C\uDDF8' },
+    VE: { name: 'Venezuela',      flag: '\uD83C\uDDFB\uD83C\uDDEA' },
+    ZA: { name: 'South Africa',   flag: '\uD83C\uDDFF\uD83C\uDDE6' },
+  };
+  function countryDisplay(code) {
+    const c = String(code || '').toUpperCase();
+    if (!c || c === 'UNKNOWN') return 'Unknown';
+    const entry = COUNTRY_LOOKUP[c];
+    return entry ? `${entry.flag} ${entry.name}` : c;
+  }
+  function titleCase(s) {
+    const v = String(s || '').trim();
+    if (!v || v.toLowerCase() === 'unknown') return 'Unknown';
+    return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+  }
+
+  function renderDimensionTables() {
+    const grid = document.getElementById('dimGrid');
+    if (!grid) return;
+    const a = state.analytics || {};
+    if (a.error) {
+      grid.innerHTML = `<div class="error">${escapeHtml(a.error)}</div>`;
+      return;
+    }
+    const country = a.byCountry || [];
+    const device = a.byDevice || [];
+    const browser = a.byBrowser || [];
+    const os = a.byOs || [];
+    if (!country.length && !device.length && !browser.length && !os.length) {
+      grid.innerHTML = `<div class="empty">No visitor data yet for ${RANGE_LABELS[state.range]}.</div>`;
+      return;
+    }
+    grid.innerHTML = [
+      dimCard('Country', country, 'country', countryDisplay),
+      dimCard('Device',  device,  'device_type', titleCase),
+      dimCard('Browser', browser, 'browser',  titleCase),
+      dimCard('OS',      os,      'os',       titleCase),
+    ].join('');
+  }
+
+  function dimCard(title, rows, valueKey, formatValue) {
+    const body = (rows && rows.length)
+      ? `
+        <table>
+          <thead>
+            <tr>
+              <th>${escapeHtml(title)}</th>
+              <th class="num">Pageviews</th>
+              <th class="num">Engaged</th>
+              <th class="num">Eng. %</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => {
+              const pct = (Number(r.engagement_rate) * 100).toFixed(0);
+              const cls = r.subs > 0 ? ' class="row--winner"' : '';
+              return `
+                <tr${cls}>
+                  <td>${escapeHtml(formatValue(r[valueKey]))}</td>
+                  <td class="num">${fmt.int(r.pageviews)}</td>
+                  <td class="num">${fmt.int(r.engaged)}</td>
+                  <td class="num">${pct}%</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `
+      : `<div class="dim-card__empty">No data</div>`;
+    return `
+      <div class="dim-card">
+        <div class="dim-card__title">${escapeHtml(title)}</div>
+        ${body}
+      </div>
+    `;
   }
 
   // ---------- Email panel ----------

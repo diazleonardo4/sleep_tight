@@ -132,6 +132,34 @@ async function buildReport(redis, dates, campaignFilter) {
   const scrollDepthBuckets = { 25: 0, 50: 0, 75: 0, 100: 0 };
   const topReferrers = {};
 
+  // Dimensional breakdowns (country / browser / os / device_type). Each
+  // map: dimValue → { pageviews, subs, visitors:Set, engagedVisitors:Set }.
+  // Materialized at output time as arrays of {value, pageviews,
+  // unique_visitors, engaged, engagement_rate, subs}, sorted desc by
+  // pageviews. Missing dim values bucket as 'unknown' per the spec.
+  //
+  // Engagement attribution is pinned to the visitor's pageview dims (see
+  // visitorDims below) so engagement_rate stays bounded at <= 1.0 even
+  // when a visitor's scroll event happens to carry slightly different
+  // dim values (e.g. UA parser hiccup mid-session).
+  const DIM_FIELDS = ['country', 'browser', 'os', 'device_type'];
+  const dimMaps = {
+    country: new Map(),
+    browser: new Map(),
+    os: new Map(),
+    device_type: new Map(),
+  };
+  const dimBucket = (dim, val) => {
+    const m = dimMaps[dim];
+    let v = m.get(val);
+    if (!v) {
+      v = { pageviews: 0, subs: 0, visitors: new Set(), engagedVisitors: new Set() };
+      m.set(val, v);
+    }
+    return v;
+  };
+  const visitorDims = new Map(); // vid -> { country, browser, os, device_type }
+
   // Per-campaign aggregates — built unconditionally so the dashboard's
   // comparison table can always show every campaign side-by-side, even
   // when a campaign filter is active for the rest of the response.
@@ -236,6 +264,28 @@ async function buildReport(redis, dates, campaignFilter) {
       if (e.utm_placement) breakdowns.byUtmPlacement[e.utm_placement] = (breakdowns.byUtmPlacement[e.utm_placement] || 0) + 1;
       const ref = normalizeReferrer(e.referrer);
       if (ref) topReferrers[ref] = (topReferrers[ref] || 0) + 1;
+
+      // Dimensional breakdowns — pageviews + visitors set. Capture this
+      // visitor's dims here (first pageview wins) so we can attribute
+      // their engagement back to the right buckets when scroll arrives.
+      const dimValues = {};
+      for (const dim of DIM_FIELDS) {
+        const v = e[dim] || 'unknown';
+        dimValues[dim] = v;
+        const b = dimBucket(dim, v);
+        b.pageviews++;
+        if (e.visitor_id) b.visitors.add(e.visitor_id);
+      }
+      if (e.visitor_id && !visitorDims.has(e.visitor_id)) {
+        visitorDims.set(e.visitor_id, dimValues);
+      }
+    }
+
+    if (e.event === 'form_submit_success') {
+      // subs is a count of submit events (not distinct visitors) per spec.
+      for (const dim of DIM_FIELDS) {
+        dimBucket(dim, e[dim] || 'unknown').subs++;
+      }
     }
 
     if (e.event === 'cta_click') {
@@ -251,6 +301,18 @@ async function buildReport(redis, dates, campaignFilter) {
     if (e.event === 'scroll_depth') {
       const d = Number(e.metadata?.depth);
       if (scrollDepthBuckets[d] != null) scrollDepthBuckets[d]++;
+
+      // Per-dim engagement: a visitor counts once per dim bucket they
+      // belong to, the first time they cross the 50% scroll threshold.
+      // Attribute to the visitor's pageview dims if known, otherwise
+      // fall back to the scroll event's own dim values.
+      if (d >= 50 && e.visitor_id) {
+        const dims = visitorDims.get(e.visitor_id);
+        for (const dim of DIM_FIELDS) {
+          const val = dims ? dims[dim] : (e[dim] || 'unknown');
+          dimBucket(dim, val).engagedVisitors.add(e.visitor_id);
+        }
+      }
     }
   }
 
@@ -293,6 +355,31 @@ async function buildReport(redis, dates, campaignFilter) {
     exitIntentTotalFinal = scanTotals.exit_intent;
   }
 
+  // Materialize the per-dimension breakdowns. Each row uses its own
+  // canonical key (country / browser / os / device_type) so the
+  // dashboard can render them with the same render fn but different
+  // value lookups (flag map for country, title-case for the rest).
+  const materializeDim = (dim, valueKey) => Array.from(dimMaps[dim].entries())
+    .map(([val, s]) => {
+      const unique = s.visitors.size;
+      const engaged = s.engagedVisitors.size;
+      return {
+        [valueKey]: val,
+        pageviews: s.pageviews,
+        unique_visitors: unique,
+        engaged,
+        engagement_rate: unique ? +(engaged / unique).toFixed(2) : 0,
+        subs: s.subs,
+      };
+    })
+    .filter(r => r.pageviews > 0)
+    .sort((a, b) => b.pageviews - a.pageviews);
+
+  const byCountry = materializeDim('country', 'country');
+  const byBrowser = materializeDim('browser', 'browser');
+  const byOs = materializeDim('os', 'os');
+  const byDevice = materializeDim('device_type', 'device_type');
+
   // Materialize the byCampaign array. Sorted by submits desc, then
   // pageviews desc — winners-first ordering for the dashboard.
   const byCampaign = Array.from(campaignStats.entries())
@@ -334,6 +421,10 @@ async function buildReport(redis, dates, campaignFilter) {
       topReferrers,
     },
     byCampaign,
+    byCountry,
+    byBrowser,
+    byOs,
+    byDevice,
   };
 }
 
