@@ -150,10 +150,6 @@
     outline: none; border-color: var(--gold);
     box-shadow: 0 0 0 3px rgba(212,175,55,0.18);
   }
-  .campaign-filter__note {
-    font-family: 'Quicksand', sans-serif; font-size: 11px; color: var(--text-faint);
-    font-style: italic;
-  }
 
   /* "Which campaign is winning?" highlight row + cells. */
   tr.row--winner { background: var(--gold-soft); }
@@ -397,9 +393,6 @@
     <select class="campaign-filter__select" id="campaignSelect" aria-label="Campaign filter">
       <option value="">All campaigns</option>
     </select>
-    <span class="campaign-filter__note" id="campaignFilterNote" hidden>
-      Per-campaign data available from 2026-04-24 onward.
-    </span>
   </div>
 
   <!-- LAYER 1 — HEALTH -->
@@ -496,26 +489,19 @@
   const RANGE_LABELS = { today: 'today', '7d': 'last 7 days', '30d': 'last 30 days' };
   const RANGE_TITLES = { today: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 
-  // Display labels for utm_campaign tokens — mirror of
-  // api/_utils/campaign-display.js. Falls back to the raw token so
-  // unmapped campaigns still render readably until added here.
-  const CAMPAIGN_DISPLAY_NAMES = {
-    sleep_tight_traffic: 'Traffic',
-    sleep_tight_lead_target: 'Leads',
-    // Older paused Leads-style campaign — kept as its own bucket (NOT
-    // aliased) so historical events don't pollute the active Leads
-    // numbers. Mirror of api/_utils/campaign-display.js.
-    sleep_tight_leadgen: 'Leadgen (paused)',
-  };
   // Sentinel for "events without a utm_campaign" — kept in sync with
   // api/_utils/attribution.js. The picker treats this as a real value
   // (the "Direct/Untagged" option) and round-trips it through the
   // URL / sessionStorage so the filter survives a refresh.
   const DIRECT_CAMPAIGN_SENTINEL = '__direct__';
   const DIRECT_DISPLAY_NAME = 'Direct/Untagged';
+  // Render the raw (slug-normalized) utm_campaign string by default —
+  // no hardcoded display-name table to keep in sync. The null bucket
+  // is the one exception: it gets a friendly label so "Direct/Untagged"
+  // reads naturally instead of as an empty string.
   const campaignDisplay = (utm) => {
-    if (utm === DIRECT_CAMPAIGN_SENTINEL) return DIRECT_DISPLAY_NAME;
-    return CAMPAIGN_DISPLAY_NAMES[utm] || utm || 'Unknown';
+    if (!utm || utm === DIRECT_CAMPAIGN_SENTINEL) return DIRECT_DISPLAY_NAME;
+    return utm;
   };
 
   // Benchmarks for health/wellness niche (2026).
@@ -708,11 +694,6 @@
   function updateCampaignUi() {
     const select = document.getElementById('campaignSelect');
     if (select) select.value = state.campaign || '';
-    // The migration caveat only matters when a specific campaign is
-    // active — "All campaigns" reads global counters that have always
-    // existed, so it has no historical gap to disclose.
-    const note = document.getElementById('campaignFilterNote');
-    if (note) note.hidden = !state.campaign;
   }
 
   // ---------- Login ----------

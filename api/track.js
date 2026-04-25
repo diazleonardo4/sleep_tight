@@ -14,7 +14,7 @@
 const crypto = require('crypto');
 const { getRedis } = require('../lib/redis');
 const { utcToDashboardDate } = require('./_utils/dates');
-const { normalizeCampaignName, DIRECT_CAMPAIGN_SENTINEL } = require('./_utils/attribution');
+const { normalizeCampaignName } = require('./_utils/attribution');
 
 const VALID_EVENTS = new Set([
   'pageview',
@@ -175,33 +175,11 @@ module.exports = async (req, res) => {
         pipeline.incr(k);
         pipeline.expire(k, COUNTER_TTL);
       }
-      // Per-campaign counter — written for EVERY event type so the
-      // dashboard's funnel filters consistently when a campaign is
-      // picked. Events without a utm_campaign land in the __direct__
-      // bucket (DIRECT_CAMPAIGN_SENTINEL) so untagged traffic is still
-      // queryable instead of falling through to "no key, returns 0".
-      // Started writing for all events at deploy time — older dates
-      // missing these keys will report partial numbers when filtered;
-      // analytics.js compensates by deriving filtered totals from the
-      // raw event scan (cheap because it scans for breakdowns anyway).
-      const campaignBucket = utmCampaignNorm || DIRECT_CAMPAIGN_SENTINEL;
-      const cKey = `count:${date}:${name}:byCampaign:${campaignBucket}`;
-      pipeline.incr(cKey);
-      pipeline.expire(cKey, COUNTER_TTL);
-
       if (name === 'pageview') {
         // Prefer visitor_id (survives network changes) — fall back to ip_hash
         // so pageviews without a visitor_id (rare: JS errors pre-snippet) still
         // count toward uniques.
-        const uniqueMember = visitorId || ipHash;
-        pipeline.pfadd(uniquesKey, uniqueMember);
-
-        // Per-campaign uniques — same union semantics as the global HLL
-        // but bucketed so /api/analytics?campaign=… can return a
-        // filter-correct unique count without a full event scan.
-        const uniquesByCampaignKey = `uniques:${date}:byCampaign:${campaignBucket}`;
-        pipeline.pfadd(uniquesByCampaignKey, uniqueMember);
-        pipeline.expire(uniquesByCampaignKey, COUNTER_TTL);
+        pipeline.pfadd(uniquesKey, visitorId || ipHash);
       }
 
       if (visitorId) {

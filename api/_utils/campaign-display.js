@@ -1,19 +1,11 @@
-// Display labels for utm_campaign tokens. Used wherever campaign names
-// are rendered in the dashboard UI. Future campaigns just need a new
-// entry — falling back to the raw utm_campaign token keeps the table
-// readable even before this is updated.
+// Display labels for utm_campaign tokens. Intentionally empty — the
+// dashboard now renders the raw (slug-normalized) utm_campaign string
+// directly. Add an entry here only if you want a prettier label for a
+// specific campaign in the picker; the lookup falls back to the raw
+// token, so unmapped campaigns still render readably.
 //
 // Keep in sync with the dashboard.html mirror (CAMPAIGN_DISPLAY_NAMES).
-
-const CAMPAIGN_DISPLAY_NAMES = {
-  sleep_tight_traffic: 'Traffic',
-  sleep_tight_lead_target: 'Leads',
-  // Older Leads-style campaign that was paused — kept as a distinct
-  // bucket (NOT aliased into sleep_tight_lead_target) so historical
-  // attribution stays clean. The "(paused)" tag flags its status in
-  // the picker.
-  sleep_tight_leadgen: 'Leadgen (paused)',
-};
+const CAMPAIGN_DISPLAY_NAMES = {};
 
 // Empty / null utm_campaign means the visitor came in without a UTM tag —
 // organic, direct, social share without parameters, or our own untagged

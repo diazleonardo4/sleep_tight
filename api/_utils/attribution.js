@@ -26,32 +26,22 @@ function _slug(s) {
 
 const normalizeAdName = _slug;
 
-// Reserved for future typo-consolidation. Kept as an empty map (rather
-// than removed entirely) so callers don't need to branch on its
-// existence — normalizeCampaignName below always does the lookup.
-//
-// IMPORTANT: only add an entry here when two slugs are *the same
-// campaign* with different spellings. Distinct campaigns (e.g. an old
-// paused campaign and a new active one) MUST stay as separate buckets
-// even if their names look similar — merging them silently corrupts
-// historical attribution and inflates the surviving bucket's metrics.
-const UTM_ALIASES = {};
-
 // Empty/missing utm_campaign collapses to this sentinel for filtering.
 // Stored event payloads use null (not the sentinel) — the sentinel is
 // only used in API query params to mean "filter to events with no UTM".
 const DIRECT_CAMPAIGN_SENTINEL = '__direct__';
 
-// Canonicalize utm_campaign: slug-normalize, then resolve through
-// UTM_ALIASES so historical drift (e.g. sleep_tight_leadgen ➜
-// sleep_tight_lead_target) merges into the canonical bucket at read
-// time. Returns '' when the input is missing/blank — callers decide
-// whether to translate that to null (storage) or to the direct
+// Canonicalize utm_campaign: slug-normalize so casing/whitespace
+// variants ("Sleep Tight Traffic" vs "sleep_tight_traffic") collapse
+// to the same key. Returns '' when input is missing/blank — callers
+// decide whether to translate that to null (storage) or to the direct
 // sentinel (filtering).
+//
+// Note: we deliberately do NOT alias different-but-similar campaign
+// names into a single bucket. Each distinct campaign — including
+// historical ones — keeps its own bucket so attribution stays clean.
 function normalizeCampaignName(s) {
-  const slug = _slug(s);
-  if (!slug) return '';
-  return UTM_ALIASES[slug] || slug;
+  return _slug(s);
 }
 
 // Returns true if `eventUtm` matches the active campaign filter.
@@ -112,6 +102,5 @@ module.exports = {
   normalizePlacement,
   eventMatchesCampaign,
   PLACEMENT_ALIASES,
-  UTM_ALIASES,
   DIRECT_CAMPAIGN_SENTINEL,
 };

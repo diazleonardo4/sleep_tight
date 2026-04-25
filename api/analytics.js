@@ -69,16 +69,12 @@ async function buildReport(redis, dates, campaignFilter) {
   //   - No filter → MGET pre-aggregated totals (one round trip, fast).
   //   - Filter set → derive totals from the raw event scan further down.
   //     The scan parses every event in the range anyway (for breakdowns,
-  //     visitor stats, byCampaign aggregates), so getting filtered totals
-  //     from it is free — and it's the only path that's correct for
-  //     events stored before per-campaign counters started being written
-  //     for every event type, plus events whose ingest-time normalization
-  //     differed from current canonical names.
-  //
-  // The per-campaign counter keys (count:<date>:<event>:byCampaign:<utm>)
-  // are still written in track.js — they keep the door open for future
-  // optimization tiers that might skip the scan, but right now we trust
-  // the scan as the source of truth for any filtered query.
+  //     visitor stats, the byCampaign comparison aggregate), so getting
+  //     filtered totals from it is free — and it's the only path that
+  //     can correctly handle events that may not have been bucketed
+  //     into per-campaign keys at ingest time. We deliberately do NOT
+  //     write per-campaign counter keys; the raw event scan IS the
+  //     filter path.
   let pageviewsTotal = 0, ctaClickTotal = 0, formFocusTotal = 0;
   let formSuccessTotal = 0, formErrorTotal = 0, exitIntentTotal = 0;
   if (!campaignFilter) {
@@ -105,41 +101,21 @@ async function buildReport(redis, dates, campaignFilter) {
     exitIntentTotal = sumSlice(5);
   }
 
-  // Unique pageviews. Two HLL paths:
-  //   - No filter → union the global per-day uniques HLLs.
-  //   - Filter set → union the per-campaign uniques HLLs
-  //     (uniques:<date>:byCampaign:<utm-or-__direct__>). Older dates that
-  //     predate the per-campaign HLL writes will contribute 0 from
-  //     PFCOUNT — the scan loop below also tracks distinct visitors for
-  //     the filtered set, and we take the larger of the two (HLL covers
-  //     dates the scan can no longer reach if event TTL has trimmed
-  //     them; scan covers older byCampaign-key-less dates).
-  let uniquePageviewsHll = 0;
+  // Unique pageviews. Two paths, picked by whether a filter is active:
+  //   - No filter → PFCOUNT union of the global per-day HLLs (cheap,
+  //     accurate to ~0.8%).
+  //   - Filter set → distinct visitor_id Set assembled in the scan
+  //     loop below (filteredUniqueVisitors). Exact for the filtered
+  //     subset; no separate per-campaign HLL needed.
+  let uniquePageviews = 0;
   if (!campaignFilter) {
     const uniqueKeys = dates.map(d => `uniques:${d}`);
     if (uniqueKeys.length === 1) {
-      uniquePageviewsHll = (await redis.pfcount(uniqueKeys[0])) || 0;
+      uniquePageviews = (await redis.pfcount(uniqueKeys[0])) || 0;
     } else if (uniqueKeys.length > 1) {
-      uniquePageviewsHll = (await redis.pfcount(...uniqueKeys)) || 0;
-    }
-  } else {
-    const bucket = campaignFilter === DIRECT_CAMPAIGN_SENTINEL
-      ? DIRECT_CAMPAIGN_SENTINEL
-      : campaignFilter;
-    const uniqueKeys = dates.map(d => `uniques:${d}:byCampaign:${bucket}`);
-    try {
-      if (uniqueKeys.length === 1) {
-        uniquePageviewsHll = (await redis.pfcount(uniqueKeys[0])) || 0;
-      } else if (uniqueKeys.length > 1) {
-        uniquePageviewsHll = (await redis.pfcount(...uniqueKeys)) || 0;
-      }
-    } catch (_) {
-      // Missing keys → PFCOUNT treats them as empty HLLs, returns 0.
-      // Any other failure: fall back silently to the scan value.
-      uniquePageviewsHll = 0;
+      uniquePageviews = (await redis.pfcount(...uniqueKeys)) || 0;
     }
   }
-  let uniquePageviews = uniquePageviewsHll;
 
   // Scan raw events for breakdowns. Parse once, attribute many times.
   const scanLists = await Promise.all(dates.map(d => redis.zrange(`events:${d}`, 0, -1)));
@@ -293,14 +269,9 @@ async function buildReport(redis, dates, campaignFilter) {
     ? +(totalEventsInRange / scannedVisitors).toFixed(2)
     : 0;
 
-  // Reconcile unique pageviews when a filter is active. PFCOUNT on the
-  // per-campaign HLL keys is authoritative for dates that have them
-  // (post-deploy), but those keys can be missing on older dates. The
-  // scan-derived set covers the entire ZSET range, so prefer whichever
-  // is larger — that's HLL on fresh dates, scan on legacy dates,
-  // matching reality on either side of the deploy.
+  // Filtered case: uniques come straight from the scan-derived set.
   if (campaignFilter) {
-    uniquePageviews = Math.max(uniquePageviewsHll, filteredUniqueVisitors.size);
+    uniquePageviews = filteredUniqueVisitors.size;
   }
 
   // When filter is active, totals come from the scan (the only path
