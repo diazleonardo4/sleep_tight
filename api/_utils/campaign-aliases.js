@@ -11,7 +11,7 @@
 //   4. Add a display label in api/_utils/campaign-display.js.
 //   5. Redeploy.
 const CAMPAIGN_ID_TO_UTM = {
-  '6926783153028': 'sleep_tight_traffic',
+  '6926783153028': 'sleep_tight_leadgen',
   '6929895898228': 'sleep_tight_lead_target',
 };
 
