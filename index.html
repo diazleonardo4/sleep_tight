@@ -658,10 +658,19 @@
     flushTimer = setTimeout(function () { flushTimer = null; flush(); }, FLUSH_INTERVAL_MS);
   }
 
-  // Retry once after 1s on network error OR non-2xx. The FIRST request to a
-  // cold Vercel function sometimes returns 503 at the edge before the handler
-  // runs (container / Redis still warming). After ~1s the container is warm
-  // and the retry succeeds. One retry only — don't hammer a broken endpoint.
+  // Retry with exponential backoff on network error OR non-2xx. The FIRST
+  // request to a cold Vercel function sometimes returns 503 at the edge
+  // before the handler runs (container / Redis still warming); spikier
+  // bursts can also stack up briefly. Two retries (1s, 3s) cover both
+  // cold-start and transient overload without hammering a truly broken
+  // endpoint. 5xx and network errors retry; 4xx (validation) doesn't —
+  // it's the client's fault and won't get better on retry.
+  var MAX_RETRIES = 2;
+  var BACKOFF_MS = [1000, 3000];
+  function shouldRetry(status) {
+    // status undefined = network error; 5xx = server-side transient.
+    return status === undefined || (status >= 500 && status < 600);
+  }
   function sendBatch(body, attempt) {
     try {
       return fetch(ENDPOINT, {
@@ -670,16 +679,16 @@
         body: body,
         keepalive: true,
       }).then(function (r) {
-        if (!r.ok && attempt === 0) {
+        if (!r.ok && shouldRetry(r.status) && attempt < MAX_RETRIES) {
           return new Promise(function (resolve) {
-            setTimeout(function () { resolve(sendBatch(body, 1)); }, 1000);
+            setTimeout(function () { resolve(sendBatch(body, attempt + 1)); }, BACKOFF_MS[attempt]);
           });
         }
         return r;
       }).catch(function () {
-        if (attempt === 0) {
+        if (attempt < MAX_RETRIES) {
           return new Promise(function (resolve) {
-            setTimeout(function () { resolve(sendBatch(body, 1)); }, 1000);
+            setTimeout(function () { resolve(sendBatch(body, attempt + 1)); }, BACKOFF_MS[attempt]);
           });
         }
       });
