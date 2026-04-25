@@ -150,6 +150,10 @@
     outline: none; border-color: var(--gold);
     box-shadow: 0 0 0 3px rgba(212,175,55,0.18);
   }
+  .campaign-filter__note {
+    font-family: 'Quicksand', sans-serif; font-size: 11px; color: var(--text-faint);
+    font-style: italic;
+  }
 
   /* "Which campaign is winning?" highlight row + cells. */
   tr.row--winner { background: var(--gold-soft); }
@@ -393,6 +397,9 @@
     <select class="campaign-filter__select" id="campaignSelect" aria-label="Campaign filter">
       <option value="">All campaigns</option>
     </select>
+    <span class="campaign-filter__note" id="campaignFilterNote" hidden>
+      Per-campaign data available from 2026-04-24 onward.
+    </span>
   </div>
 
   <!-- LAYER 1 — HEALTH -->
@@ -697,6 +704,11 @@
   function updateCampaignUi() {
     const select = document.getElementById('campaignSelect');
     if (select) select.value = state.campaign || '';
+    // The migration caveat only matters when a specific campaign is
+    // active — "All campaigns" reads global counters that have always
+    // existed, so it has no historical gap to disclose.
+    const note = document.getElementById('campaignFilterNote');
+    if (note) note.hidden = !state.campaign;
   }
 
   // ---------- Login ----------

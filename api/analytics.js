@@ -65,55 +65,81 @@ module.exports = async (req, res) => {
 };
 
 async function buildReport(redis, dates, campaignFilter) {
-  // Pick the per-event counter source: top-level totals when no campaign
-  // filter, byCampaign suffix when one is set. The byCampaign counters
-  // are written from track.js starting at the time this code shipped, so
-  // dates before that will report zeros — accepted, no backfill.
-  // No counter keys exist for the direct sentinel (track.js doesn't
-  // increment per-campaign counters for empty utm_campaign), so an
-  // empty-string suffix forces an MGET miss; we'll recompute totals
-  // from the scan loop below for that case.
-  const useScanForTotals = campaignFilter === DIRECT_CAMPAIGN_SENTINEL;
-  const counterSuffix = (campaignFilter && !useScanForTotals)
-    ? `:byCampaign:${campaignFilter}`
-    : '';
-  const pageviewKeys = dates.map(d => `count:${d}:pageview${counterSuffix}`);
-  const ctaClickKeys = dates.map(d => `count:${d}:cta_click${counterSuffix}`);
-  const formFocusKeys = dates.map(d => `count:${d}:form_focus${counterSuffix}`);
-  const formSuccessKeys = dates.map(d => `count:${d}:form_submit_success${counterSuffix}`);
-  const formErrorKeys = dates.map(d => `count:${d}:form_submit_error${counterSuffix}`);
-  const exitIntentKeys = dates.map(d => `count:${d}:exit_intent${counterSuffix}`);
+  // Read strategy:
+  //   - No filter → MGET pre-aggregated totals (one round trip, fast).
+  //   - Filter set → derive totals from the raw event scan further down.
+  //     The scan parses every event in the range anyway (for breakdowns,
+  //     visitor stats, byCampaign aggregates), so getting filtered totals
+  //     from it is free — and it's the only path that's correct for
+  //     events stored before per-campaign counters started being written
+  //     for every event type, plus events whose ingest-time normalization
+  //     differed from current canonical names.
+  //
+  // The per-campaign counter keys (count:<date>:<event>:byCampaign:<utm>)
+  // are still written in track.js — they keep the door open for future
+  // optimization tiers that might skip the scan, but right now we trust
+  // the scan as the source of truth for any filtered query.
+  let pageviewsTotal = 0, ctaClickTotal = 0, formFocusTotal = 0;
+  let formSuccessTotal = 0, formErrorTotal = 0, exitIntentTotal = 0;
+  if (!campaignFilter) {
+    const pageviewKeys = dates.map(d => `count:${d}:pageview`);
+    const ctaClickKeys = dates.map(d => `count:${d}:cta_click`);
+    const formFocusKeys = dates.map(d => `count:${d}:form_focus`);
+    const formSuccessKeys = dates.map(d => `count:${d}:form_submit_success`);
+    const formErrorKeys = dates.map(d => `count:${d}:form_submit_error`);
+    const exitIntentKeys = dates.map(d => `count:${d}:exit_intent`);
+    const mgetKeys = [
+      ...pageviewKeys, ...ctaClickKeys, ...formFocusKeys,
+      ...formSuccessKeys, ...formErrorKeys, ...exitIntentKeys,
+    ];
+    const mgetVals = mgetKeys.length ? await redis.mget(...mgetKeys) : [];
+    const sumSlice = (i) => {
+      const start = i * dates.length;
+      return mgetVals.slice(start, start + dates.length).reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+    };
+    pageviewsTotal = sumSlice(0);
+    ctaClickTotal = sumSlice(1);
+    formFocusTotal = sumSlice(2);
+    formSuccessTotal = sumSlice(3);
+    formErrorTotal = sumSlice(4);
+    exitIntentTotal = sumSlice(5);
+  }
 
-  // One round trip for all pre-aggregated totals.
-  const mgetKeys = [
-    ...pageviewKeys, ...ctaClickKeys, ...formFocusKeys,
-    ...formSuccessKeys, ...formErrorKeys, ...exitIntentKeys,
-  ];
-  const mgetVals = mgetKeys.length ? await redis.mget(...mgetKeys) : [];
-  const sumSlice = (i) => {
-    const start = i * dates.length;
-    return mgetVals.slice(start, start + dates.length).reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
-  };
-  const pageviewsTotal = sumSlice(0);
-  const ctaClickTotal = sumSlice(1);
-  const formFocusTotal = sumSlice(2);
-  const formSuccessTotal = sumSlice(3);
-  const formErrorTotal = sumSlice(4);
-  const exitIntentTotal = sumSlice(5);
-
-  // Unique visitors — HyperLogLog union across day keys when there's no
-  // campaign filter (HLL is per-day, not per-campaign). With a filter,
-  // we compute uniques further down from the scan loop.
-  let uniquePageviews = 0;
+  // Unique pageviews. Two HLL paths:
+  //   - No filter → union the global per-day uniques HLLs.
+  //   - Filter set → union the per-campaign uniques HLLs
+  //     (uniques:<date>:byCampaign:<utm-or-__direct__>). Older dates that
+  //     predate the per-campaign HLL writes will contribute 0 from
+  //     PFCOUNT — the scan loop below also tracks distinct visitors for
+  //     the filtered set, and we take the larger of the two (HLL covers
+  //     dates the scan can no longer reach if event TTL has trimmed
+  //     them; scan covers older byCampaign-key-less dates).
+  let uniquePageviewsHll = 0;
   if (!campaignFilter) {
     const uniqueKeys = dates.map(d => `uniques:${d}`);
     if (uniqueKeys.length === 1) {
-      uniquePageviews = (await redis.pfcount(uniqueKeys[0])) || 0;
+      uniquePageviewsHll = (await redis.pfcount(uniqueKeys[0])) || 0;
     } else if (uniqueKeys.length > 1) {
-      // PFCOUNT with multiple keys returns the cardinality of the union.
-      uniquePageviews = (await redis.pfcount(...uniqueKeys)) || 0;
+      uniquePageviewsHll = (await redis.pfcount(...uniqueKeys)) || 0;
+    }
+  } else {
+    const bucket = campaignFilter === DIRECT_CAMPAIGN_SENTINEL
+      ? DIRECT_CAMPAIGN_SENTINEL
+      : campaignFilter;
+    const uniqueKeys = dates.map(d => `uniques:${d}:byCampaign:${bucket}`);
+    try {
+      if (uniqueKeys.length === 1) {
+        uniquePageviewsHll = (await redis.pfcount(uniqueKeys[0])) || 0;
+      } else if (uniqueKeys.length > 1) {
+        uniquePageviewsHll = (await redis.pfcount(...uniqueKeys)) || 0;
+      }
+    } catch (_) {
+      // Missing keys → PFCOUNT treats them as empty HLLs, returns 0.
+      // Any other failure: fall back silently to the scan value.
+      uniquePageviewsHll = 0;
     }
   }
+  let uniquePageviews = uniquePageviewsHll;
 
   // Scan raw events for breakdowns. Parse once, attribute many times.
   const scanLists = await Promise.all(dates.map(d => redis.zrange(`events:${d}`, 0, -1)));
@@ -159,10 +185,9 @@ async function buildReport(redis, dates, campaignFilter) {
   const visitorStats = new Map();
   let totalEventsInRange = 0;
 
-  // Scan-derived counters used when the per-event MGET path is bypassed
-  // (currently: campaign filter === direct sentinel, where no counter
-  // keys exist). Tallied alongside everything else and only assigned
-  // back to the *Total variables after the loop.
+  // Scan-derived per-event counts. Always tallied; used as the source of
+  // truth for the response totals when a campaign filter is active
+  // (the MGET path is skipped in that case — see top of buildReport).
   const scanTotals = {
     pageview: 0, cta_click: 0, form_focus: 0,
     form_submit_success: 0, form_submit_error: 0, exit_intent: 0,
@@ -203,7 +228,7 @@ async function buildReport(redis, dates, campaignFilter) {
       filteredUniqueVisitors.add(e.visitor_id);
     }
 
-    if (useScanForTotals && scanTotals[e.event] != null) {
+    if (scanTotals[e.event] != null) {
       scanTotals[e.event]++;
     }
 
@@ -268,21 +293,27 @@ async function buildReport(redis, dates, campaignFilter) {
     ? +(totalEventsInRange / scannedVisitors).toFixed(2)
     : 0;
 
-  // When filtering by campaign, the HLL union is unusable (it covers the
-  // whole day), so fall back to the scan-derived distinct visitor count.
+  // Reconcile unique pageviews when a filter is active. PFCOUNT on the
+  // per-campaign HLL keys is authoritative for dates that have them
+  // (post-deploy), but those keys can be missing on older dates. The
+  // scan-derived set covers the entire ZSET range, so prefer whichever
+  // is larger — that's HLL on fresh dates, scan on legacy dates,
+  // matching reality on either side of the deploy.
   if (campaignFilter) {
-    uniquePageviews = filteredUniqueVisitors.size;
+    uniquePageviews = Math.max(uniquePageviewsHll, filteredUniqueVisitors.size);
   }
 
-  // Direct/Untagged filter: no per-campaign counter keys exist, so the
-  // MGET path returned zeros — overwrite from the scan.
+  // When filter is active, totals come from the scan (the only path
+  // that's correct for events without per-campaign counter keys, and
+  // also the only path that's robust against ingest-time normalization
+  // drift). Otherwise the MGET pre-aggregates already populated above.
   let pageviewsTotalFinal = pageviewsTotal;
   let ctaClickTotalFinal = ctaClickTotal;
   let formFocusTotalFinal = formFocusTotal;
   let formSuccessTotalFinal = formSuccessTotal;
   let formErrorTotalFinal = formErrorTotal;
   let exitIntentTotalFinal = exitIntentTotal;
-  if (useScanForTotals) {
+  if (campaignFilter) {
     pageviewsTotalFinal = scanTotals.pageview;
     ctaClickTotalFinal = scanTotals.cta_click;
     formFocusTotalFinal = scanTotals.form_focus;
