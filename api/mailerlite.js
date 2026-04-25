@@ -29,6 +29,7 @@ const {
   normalizeAdName,
   normalizeCampaignName,
   normalizePlacement,
+  DIRECT_CAMPAIGN_SENTINEL,
 } = require('./_utils/attribution');
 
 const cache = new Map(); // cacheKey -> { data, at } — key includes campaign filter
@@ -41,7 +42,11 @@ module.exports = async (req, res) => {
   // Optional campaign filter — when set, every aggregate (subs counts +
   // byAd / byPlacement / byCampaign breakdowns) restricts to subscribers
   // whose utm_campaign matches the filter. Empty string = no filter.
-  const campaignFilter = normalizeCampaignName(readQuery(req, 'campaign') || '');
+  // The literal sentinel `__direct__` means "subscribers without UTM".
+  const rawCampaignParam = readQuery(req, 'campaign') || '';
+  const campaignFilter = rawCampaignParam === DIRECT_CAMPAIGN_SENTINEL
+    ? DIRECT_CAMPAIGN_SENTINEL
+    : normalizeCampaignName(rawCampaignParam);
   const cacheKey = `${range}:${campaignFilter || 'all'}`;
 
   const hit = cache.get(cacheKey);
@@ -69,18 +74,22 @@ module.exports = async (req, res) => {
     // byCampaign aggregates over the *unfiltered* in-range set so the
     // dashboard's "Which campaign is winning?" comparison table can show
     // every campaign side by side, even when the page-level filter is
-    // narrowed to one of them.
+    // narrowed to one of them. Subscribers without utm_campaign land in
+    // the DIRECT_CAMPAIGN_SENTINEL bucket (rendered as "Direct/Untagged").
     const byCampaign = {};
     for (const s of freeInWindow) {
-      const camp = normalizeCampaignName((s.fields && s.fields.utm_campaign) || '') || 'unknown';
-      byCampaign[camp] = (byCampaign[camp] || 0) + 1;
+      const camp = normalizeCampaignName((s.fields && s.fields.utm_campaign) || '');
+      const key = camp || DIRECT_CAMPAIGN_SENTINEL;
+      byCampaign[key] = (byCampaign[key] || 0) + 1;
     }
 
     // Apply the campaign filter for everything else (counts + byAd +
-    // byPlacement). When unset, this is a no-op pass-through.
+    // byPlacement). When unset, this is a no-op pass-through. The
+    // direct sentinel matches subscribers with no utm_campaign.
     const matchesCampaign = (s) => {
       if (!campaignFilter) return true;
       const camp = normalizeCampaignName((s.fields && s.fields.utm_campaign) || '');
+      if (campaignFilter === DIRECT_CAMPAIGN_SENTINEL) return !camp;
       return camp === campaignFilter;
     };
     const freeInScope = freeInWindow.filter(matchesCampaign);

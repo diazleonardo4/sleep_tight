@@ -15,7 +15,11 @@
 
 const { getRedis } = require('../lib/redis');
 const { getDateRange, normalizeRange } = require('./_utils/dates');
-const { normalizeCampaignName } = require('./_utils/attribution');
+const {
+  normalizeCampaignName,
+  eventMatchesCampaign,
+  DIRECT_CAMPAIGN_SENTINEL,
+} = require('./_utils/attribution');
 
 const SCAN_EVENTS = new Set([
   'pageview', 'cta_click', 'scroll_depth', 'form_focus',
@@ -32,7 +36,12 @@ module.exports = async (req, res) => {
   // Optional campaign filter. When set, totals + breakdowns restrict to
   // events whose utm_campaign matches; uniques fall back to scan-derived
   // distinct visitor_ids (HLL is per-day, not per-campaign).
-  const campaignFilter = normalizeCampaignName(readQuery(req, 'campaign') || '');
+  // The literal sentinel `__direct__` bypasses normalization — it's the
+  // wire value for "filter to events without a utm_campaign".
+  const rawCampaignParam = readQuery(req, 'campaign') || '';
+  const campaignFilter = rawCampaignParam === DIRECT_CAMPAIGN_SENTINEL
+    ? DIRECT_CAMPAIGN_SENTINEL
+    : normalizeCampaignName(rawCampaignParam);
   const cacheKey = `${range}:${campaignFilter || 'all'}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) {
@@ -60,7 +69,14 @@ async function buildReport(redis, dates, campaignFilter) {
   // filter, byCampaign suffix when one is set. The byCampaign counters
   // are written from track.js starting at the time this code shipped, so
   // dates before that will report zeros — accepted, no backfill.
-  const counterSuffix = campaignFilter ? `:byCampaign:${campaignFilter}` : '';
+  // No counter keys exist for the direct sentinel (track.js doesn't
+  // increment per-campaign counters for empty utm_campaign), so an
+  // empty-string suffix forces an MGET miss; we'll recompute totals
+  // from the scan loop below for that case.
+  const useScanForTotals = campaignFilter === DIRECT_CAMPAIGN_SENTINEL;
+  const counterSuffix = (campaignFilter && !useScanForTotals)
+    ? `:byCampaign:${campaignFilter}`
+    : '';
   const pageviewKeys = dates.map(d => `count:${d}:pageview${counterSuffix}`);
   const ctaClickKeys = dates.map(d => `count:${d}:cta_click${counterSuffix}`);
   const formFocusKeys = dates.map(d => `count:${d}:form_focus${counterSuffix}`);
@@ -143,17 +159,31 @@ async function buildReport(redis, dates, campaignFilter) {
   const visitorStats = new Map();
   let totalEventsInRange = 0;
 
+  // Scan-derived counters used when the per-event MGET path is bypassed
+  // (currently: campaign filter === direct sentinel, where no counter
+  // keys exist). Tallied alongside everything else and only assigned
+  // back to the *Total variables after the loop.
+  const scanTotals = {
+    pageview: 0, cta_click: 0, form_focus: 0,
+    form_submit_success: 0, form_submit_error: 0, exit_intent: 0,
+  };
+
   for (const raw of allRaw) {
     let e;
     try { e = JSON.parse(raw); } catch (_) { continue; }
     if (!e || !SCAN_EVENTS.has(e.event)) continue;
 
+    // Slug + alias-resolve. Empty string here means the event has no
+    // utm_campaign — bucketed under DIRECT_CAMPAIGN_SENTINEL for the
+    // comparison table so untagged traffic always has a row.
     const eventCampaign = normalizeCampaignName(e.utm_campaign || '');
+    const campaignKey = eventCampaign || DIRECT_CAMPAIGN_SENTINEL;
 
     // Always feed the byCampaign aggregate (independent of any filter)
-    // so the comparison table sees every campaign in the date range.
-    if (eventCampaign) {
-      const cs = campaignBucket(eventCampaign);
+    // so the comparison table sees every campaign — including
+    // Direct/Untagged — for the entire date range.
+    {
+      const cs = campaignBucket(campaignKey);
       if (e.event === 'pageview') {
         cs.pageviews++;
         if (e.visitor_id) cs.visitors.add(e.visitor_id);
@@ -167,10 +197,14 @@ async function buildReport(redis, dates, campaignFilter) {
 
     // Page-level filter: skip events outside the selected campaign for
     // every other aggregate (visitors, breakdowns, scroll buckets, etc.).
-    if (campaignFilter && eventCampaign !== campaignFilter) continue;
+    if (!eventMatchesCampaign(e.utm_campaign, campaignFilter)) continue;
 
     if (campaignFilter && e.event === 'pageview' && e.visitor_id) {
       filteredUniqueVisitors.add(e.visitor_id);
+    }
+
+    if (useScanForTotals && scanTotals[e.event] != null) {
+      scanTotals[e.event]++;
     }
 
     totalEventsInRange++;
@@ -240,6 +274,23 @@ async function buildReport(redis, dates, campaignFilter) {
     uniquePageviews = filteredUniqueVisitors.size;
   }
 
+  // Direct/Untagged filter: no per-campaign counter keys exist, so the
+  // MGET path returned zeros — overwrite from the scan.
+  let pageviewsTotalFinal = pageviewsTotal;
+  let ctaClickTotalFinal = ctaClickTotal;
+  let formFocusTotalFinal = formFocusTotal;
+  let formSuccessTotalFinal = formSuccessTotal;
+  let formErrorTotalFinal = formErrorTotal;
+  let exitIntentTotalFinal = exitIntentTotal;
+  if (useScanForTotals) {
+    pageviewsTotalFinal = scanTotals.pageview;
+    ctaClickTotalFinal = scanTotals.cta_click;
+    formFocusTotalFinal = scanTotals.form_focus;
+    formSuccessTotalFinal = scanTotals.form_submit_success;
+    formErrorTotalFinal = scanTotals.form_submit_error;
+    exitIntentTotalFinal = scanTotals.exit_intent;
+  }
+
   // Materialize the byCampaign array. Sorted by submits desc, then
   // pageviews desc — winners-first ordering for the dashboard.
   const byCampaign = Array.from(campaignStats.entries())
@@ -259,7 +310,7 @@ async function buildReport(redis, dates, campaignFilter) {
     .sort((a, b) => (b.submits - a.submits) || (b.pageviews - a.pageviews));
 
   return {
-    pageviews: { total: pageviewsTotal, unique: uniquePageviews },
+    pageviews: { total: pageviewsTotalFinal, unique: uniquePageviews },
     visitors: {
       total_unique: uniquePageviews,
       avg_events_per_visitor: avgEventsPerVisitor,
@@ -269,12 +320,12 @@ async function buildReport(redis, dates, campaignFilter) {
       scanned_visitors: scannedVisitors,
     },
     events: {
-      cta_click: { total: ctaClickTotal, byLocation: ctaByLocation },
+      cta_click: { total: ctaClickTotalFinal, byLocation: ctaByLocation },
       scroll_depth: scrollDepthBuckets,
-      form_focus: formFocusTotal,
-      form_submit_success: formSuccessTotal,
-      form_submit_error: formErrorTotal,
-      exit_intent: { total: exitIntentTotal, byReason: exitByReason },
+      form_focus: formFocusTotalFinal,
+      form_submit_success: formSuccessTotalFinal,
+      form_submit_error: formErrorTotalFinal,
+      exit_intent: { total: exitIntentTotalFinal, byReason: exitByReason },
     },
     breakdowns: {
       ...breakdowns,

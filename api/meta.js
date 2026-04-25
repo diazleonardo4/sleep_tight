@@ -37,7 +37,10 @@
 
 const { getDateRange, normalizeRange, getDashboardDayBoundaries } = require('./_utils/dates');
 const { utcToMetaDate } = require('./_utils/meta-tz');
-const { normalizeCampaignName } = require('./_utils/attribution');
+const {
+  normalizeCampaignName,
+  DIRECT_CAMPAIGN_SENTINEL,
+} = require('./_utils/attribution');
 const { utmFromCampaignId, campaignIdFromUtm } = require('./_utils/campaign-aliases');
 
 const cache = new Map(); // cacheKey -> { data, at } — key includes campaign filter
@@ -47,7 +50,14 @@ module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
   const range = normalizeRange(readQuery(req, 'range'));
-  const campaignFilter = normalizeCampaignName(readQuery(req, 'campaign') || '');
+  // The sentinel `__direct__` represents "events without a Meta-driven
+  // utm_campaign" — Meta itself has no equivalent (every Meta-served
+  // event has a campaign), so we short-circuit to a zeroed response
+  // below. Other values get slugged + alias-resolved.
+  const rawCampaignParam = readQuery(req, 'campaign') || '';
+  const campaignFilter = rawCampaignParam === DIRECT_CAMPAIGN_SENTINEL
+    ? DIRECT_CAMPAIGN_SENTINEL
+    : normalizeCampaignName(rawCampaignParam);
   const cacheKey = `${range}:${campaignFilter || 'all'}`;
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) {
@@ -58,6 +68,21 @@ module.exports = async (req, res) => {
   const token = process.env.META_ACCESS_TOKEN;
   if (!accountId || !token) {
     return res.status(500).json({ error: 'Meta env vars not configured' });
+  }
+
+  // Direct/Untagged → zeroed Meta response. Untagged traffic is, by
+  // definition, not driven by a Meta campaign, so spend/clicks are 0.
+  if (campaignFilter === DIRECT_CAMPAIGN_SENTINEL) {
+    const empty = {
+      range,
+      campaign: DIRECT_CAMPAIGN_SENTINEL,
+      timeRange: null,
+      dashboardRange: getDateRange(range),
+      summary: { spend: 0, impressions: 0, clicks: 0, reach: 0, ctr: 0, cpc: 0, cpm: 0 },
+      byAd: [], byPlacement: [], byCampaign: [],
+    };
+    cache.set(cacheKey, { data: empty, at: Date.now() });
+    return res.status(200).json(empty);
   }
 
   // Campaign filter → resolve to a Meta campaign_id via the alias map.

@@ -119,9 +119,10 @@
   .range__btn.is-active { background: var(--navy); color: #fff; }
   .range__btn:hover:not(.is-active) { color: var(--navy); }
 
-  /* Campaign filter pills — same control vocabulary as range, in gold so
-     "scope" controls (range = time, campaign = attribution) read as a
-     pair without competing visually. */
+  /* Campaign filter dropdown — sits below the range tabs. Single <select>
+     so the option list can show inline event counts (e.g. "Traffic (220
+     events)") and stay legible even with a dozen campaigns. Gold accent
+     mirrors the range control so the two "scope" controls read as a pair. */
   .campaign-filter {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin-bottom: 24px;
@@ -130,17 +131,25 @@
     font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 12px;
     text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint);
   }
-  .campaign-filter__pills {
-    display: inline-flex; background: #fff; border-radius: 10px; padding: 4px;
-    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
-  }
-  .campaign-filter__btn {
-    background: transparent; border: none; padding: 7px 14px; border-radius: 7px;
+  .campaign-filter__select {
+    appearance: none; -webkit-appearance: none;
+    background: #fff;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%231a2744' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    border: 1px solid rgba(26,39,68,0.12); border-radius: 10px;
+    padding: 8px 36px 8px 14px;
     font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 13px;
-    color: var(--text-muted); transition: all 0.15s;
+    color: var(--navy); cursor: pointer;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+    transition: border-color 0.15s, box-shadow 0.15s;
+    min-width: 220px;
   }
-  .campaign-filter__btn.is-active { background: var(--gold); color: var(--navy); }
-  .campaign-filter__btn:hover:not(.is-active) { color: var(--navy); }
+  .campaign-filter__select:hover { border-color: var(--gold); }
+  .campaign-filter__select:focus {
+    outline: none; border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(212,175,55,0.18);
+  }
 
   /* "Which campaign is winning?" highlight row + cells. */
   tr.row--winner { background: var(--gold-soft); }
@@ -376,13 +385,14 @@
 
   <!-- CAMPAIGN FILTER — narrows KPIs / funnel / ad table to one campaign.
        The "Which campaign is winning?" comparison table below always
-       shows every campaign regardless of selection. Pills are populated
-       at boot from CAMPAIGN_DISPLAY_NAMES. -->
-  <div class="campaign-filter" role="tablist" aria-label="Campaign filter">
-    <span class="campaign-filter__label">Campaign</span>
-    <div class="campaign-filter__pills" id="campaignFilterPills">
-      <button class="campaign-filter__btn is-active" data-campaign="" type="button">All campaigns</button>
-    </div>
+       shows every campaign regardless of selection. Options are
+       populated from /api/campaigns each refresh, with inline event
+       counts so phantom or typo'd campaigns surface immediately. -->
+  <div class="campaign-filter">
+    <label class="campaign-filter__label" for="campaignSelect">Campaign</label>
+    <select class="campaign-filter__select" id="campaignSelect" aria-label="Campaign filter">
+      <option value="">All campaigns</option>
+    </select>
   </div>
 
   <!-- LAYER 1 — HEALTH -->
@@ -486,7 +496,16 @@
     sleep_tight_traffic: 'Traffic',
     sleep_tight_lead_target: 'Leads',
   };
-  const campaignDisplay = (utm) => CAMPAIGN_DISPLAY_NAMES[utm] || utm || 'Unknown';
+  // Sentinel for "events without a utm_campaign" — kept in sync with
+  // api/_utils/attribution.js. The picker treats this as a real value
+  // (the "Direct/Untagged" option) and round-trips it through the
+  // URL / sessionStorage so the filter survives a refresh.
+  const DIRECT_CAMPAIGN_SENTINEL = '__direct__';
+  const DIRECT_DISPLAY_NAME = 'Direct/Untagged';
+  const campaignDisplay = (utm) => {
+    if (utm === DIRECT_CAMPAIGN_SENTINEL) return DIRECT_DISPLAY_NAME;
+    return CAMPAIGN_DISPLAY_NAMES[utm] || utm || 'Unknown';
+  };
 
   // Benchmarks for health/wellness niche (2026).
   // Funnel rates are percentages; cost benchmarks are USD.
@@ -567,6 +586,9 @@
 
   const state = {
     meta: null, mailerlite: null, analytics: null, email: null, config: null,
+    // campaigns = current option list with event counts, refreshed every
+    // refreshAll() from /api/campaigns. Drives the picker.
+    campaigns: [],
     range: getInitialRange(),
     campaign: getInitialCampaign(),
   };
@@ -581,8 +603,10 @@
 
   function getInitialCampaign() {
     const urlCampaign = new URLSearchParams(location.search).get('campaign') || '';
+    if (urlCampaign === DIRECT_CAMPAIGN_SENTINEL) return DIRECT_CAMPAIGN_SENTINEL;
     if (urlCampaign) return normalizeCampaignName(urlCampaign);
     const stored = sessionStorage.getItem(CAMPAIGN_KEY) || '';
+    if (stored === DIRECT_CAMPAIGN_SENTINEL) return DIRECT_CAMPAIGN_SENTINEL;
     return stored ? normalizeCampaignName(stored) : '';
   }
 
@@ -623,37 +647,56 @@
     if (campaignLabel) campaignLabel.textContent = `sorted by subs · ${RANGE_LABELS[state.range]}`;
   }
 
-  // Pills are rebuilt every refresh from the union of (a) campaigns we
-  // know about (CAMPAIGN_DISPLAY_NAMES) and (b) campaigns Meta has spend
-  // for in this range. That way a new campaign appears in the picker as
-  // soon as Meta returns data for it, even before its display name is
-  // mapped here.
-  function rebuildCampaignPills() {
-    const wrap = document.getElementById('campaignFilterPills');
-    if (!wrap) return;
-    const utms = new Set(Object.keys(CAMPAIGN_DISPLAY_NAMES));
-    const meta = state.meta || {};
-    (meta.byCampaign || []).forEach(c => { if (c.utm_campaign) utms.add(c.utm_campaign); });
-    if (state.campaign) utms.add(state.campaign);
+  // Picker is rebuilt every refresh from /api/campaigns — the source of
+  // truth for which campaigns have events in the current range. Each
+  // option carries its event count inline so phantom or typo'd campaigns
+  // surface immediately. The current selection is preserved even when
+  // it has zero events in the new range (so the picker doesn't silently
+  // jump to "All").
+  function rebuildCampaignPicker() {
+    const select = document.getElementById('campaignSelect');
+    if (!select) return;
 
-    const ordered = Array.from(utms).sort((a, b) => campaignDisplay(a).localeCompare(campaignDisplay(b)));
-    const pills = [
-      `<button class="campaign-filter__btn" data-campaign="" type="button">All campaigns</button>`,
-      ...ordered.map(u =>
-        `<button class="campaign-filter__btn" data-campaign="${escapeHtml(u)}" type="button">${escapeHtml(campaignDisplay(u))}</button>`
-      ),
-    ].join('');
-    wrap.innerHTML = pills;
-    wrap.querySelectorAll('.campaign-filter__btn').forEach(b => {
-      b.addEventListener('click', () => setCampaign(b.dataset.campaign || ''));
+    // /api/campaigns returns canonical (alias-resolved) utm_campaigns
+    // with a null bucket for direct/untagged. Map nulls onto the
+    // sentinel so they share the rest of the picker plumbing.
+    const rows = (state.campaigns || []).map(c => ({
+      key: c.utm_campaign || DIRECT_CAMPAIGN_SENTINEL,
+      events: c.events || 0,
+    }));
+
+    // Sort by event count desc, but pin the direct bucket to the bottom
+    // so paid campaigns (the interesting ones) are on top.
+    rows.sort((a, b) => {
+      const aDirect = a.key === DIRECT_CAMPAIGN_SENTINEL ? 1 : 0;
+      const bDirect = b.key === DIRECT_CAMPAIGN_SENTINEL ? 1 : 0;
+      if (aDirect !== bDirect) return aDirect - bDirect;
+      return b.events - a.events;
     });
-    updateCampaignUi();
+
+    // Make sure the current selection is always rendered, even if it
+    // has zero events in the new range (e.g. user switched 7d → today
+    // and the campaign hasn't run today). Without this the <select>
+    // would silently fall back to "All campaigns" on render.
+    if (state.campaign && !rows.some(r => r.key === state.campaign)) {
+      rows.push({ key: state.campaign, events: 0 });
+    }
+
+    const totalEvents = rows.reduce((s, r) => s + r.events, 0);
+    const optionHtml = (value, label, events) =>
+      `<option value="${escapeHtml(value)}">${escapeHtml(label)} (${events.toLocaleString()} events)</option>`;
+
+    select.innerHTML = [
+      `<option value="">All campaigns (${totalEvents.toLocaleString()} events)</option>`,
+      ...rows.map(r => optionHtml(r.key, campaignDisplay(r.key), r.events)),
+    ].join('');
+
+    select.value = state.campaign || '';
   }
 
   function updateCampaignUi() {
-    document.querySelectorAll('.campaign-filter__btn').forEach(b => {
-      b.classList.toggle('is-active', (b.dataset.campaign || '') === state.campaign);
-    });
+    const select = document.getElementById('campaignSelect');
+    if (select) select.value = state.campaign || '';
   }
 
   // ---------- Login ----------
@@ -717,15 +760,20 @@
     // which is what the comparison table reads from.
     const c = state.campaign ? `&campaign=${encodeURIComponent(state.campaign)}` : '';
     const configPromise = state.config ? Promise.resolve({ status: 'fulfilled', value: state.config }) : null;
-    const [meta, ml, analytics, email, config] = await Promise.allSettled([
+    // /api/campaigns is fetched without the campaign filter (the picker
+    // always needs to see every option). It's range-scoped, so the
+    // counts shown next to each option always reflect the current
+    // range — switching today/7d/30d updates the picker too.
+    const [meta, ml, analytics, email, config, campaigns] = await Promise.allSettled([
       fetchJson(`/api/meta?range=${r}${c}`),
       fetchJson(`/api/mailerlite?range=${r}${c}`),
       fetchJson(`/api/analytics?range=${r}${c}`),
       fetchJson('/api/email-stats'),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
+      fetchJson(`/api/campaigns?range=${r}`),
     ]);
 
-    for (const res of [meta, ml, analytics, email, config]) {
+    for (const res of [meta, ml, analytics, email, config, campaigns]) {
       if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
@@ -738,8 +786,11 @@
     state.analytics = analytics.status === 'fulfilled' ? analytics.value : { error: analytics.reason?.message || 'Analytics unavailable' };
     state.email = email.status === 'fulfilled' ? email.value : { available: false, reason: email.reason?.message || 'Email stats unavailable' };
     if (config.status === 'fulfilled' && config.value) state.config = config.value;
+    state.campaigns = campaigns.status === 'fulfilled' && Array.isArray(campaigns.value?.campaigns)
+      ? campaigns.value.campaigns
+      : [];
 
-    rebuildCampaignPills();
+    rebuildCampaignPicker();
     render();
     renderHeaderCaption();
     refreshBtn.disabled = false;
@@ -1285,6 +1336,10 @@
 
   document.querySelectorAll('.range__btn').forEach(btn => {
     btn.addEventListener('click', () => setRange(btn.dataset.range));
+  });
+
+  document.getElementById('campaignSelect').addEventListener('change', (e) => {
+    setCampaign(e.target.value);
   });
 
   // ---------- Boot ----------

@@ -13,19 +13,54 @@
 // lives in dashboard.html for client-side joining — keep the two in sync.
 
 // Slug-style: lowercase, trim, collapse whitespace and non-alnum to "_",
-// dedupe consecutive underscores. Used for ad names AND campaign names —
-// both come from user-typed Meta UI strings vs. snake_case UTM tokens.
-function normalizeName(s) {
+// dedupe consecutive underscores, strip leading/trailing underscores.
+function _slug(s) {
   return String(s || '')
     .toLowerCase()
     .trim()
     .replace(/\s+/g, '_')
     .replace(/[^a-z0-9_]/g, '')
-    .replace(/_+/g, '_');
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
-const normalizeAdName = normalizeName;
-const normalizeCampaignName = normalizeName;
+const normalizeAdName = _slug;
+
+// Old / typo'd / draft utm_campaign values that should fold into a
+// canonical bucket. Keep the keys post-slug (lowercased + underscored)
+// so a single entry covers every casing variant of the source.
+const UTM_ALIASES = {
+  // Original draft name before "lead_target" was canonicalized.
+  sleep_tight_leadgen: 'sleep_tight_lead_target',
+};
+
+// Empty/missing utm_campaign collapses to this sentinel for filtering.
+// Stored event payloads use null (not the sentinel) — the sentinel is
+// only used in API query params to mean "filter to events with no UTM".
+const DIRECT_CAMPAIGN_SENTINEL = '__direct__';
+
+// Canonicalize utm_campaign: slug-normalize, then resolve through
+// UTM_ALIASES so historical drift (e.g. sleep_tight_leadgen ➜
+// sleep_tight_lead_target) merges into the canonical bucket at read
+// time. Returns '' when the input is missing/blank — callers decide
+// whether to translate that to null (storage) or to the direct
+// sentinel (filtering).
+function normalizeCampaignName(s) {
+  const slug = _slug(s);
+  if (!slug) return '';
+  return UTM_ALIASES[slug] || slug;
+}
+
+// Returns true if `eventUtm` matches the active campaign filter.
+//   - filter falsy           → no filter, always matches
+//   - filter is sentinel     → matches only events with empty utm_campaign
+//   - filter is a utm token  → matches events whose normalized utm equals it
+function eventMatchesCampaign(eventUtm, filter) {
+  if (!filter) return true;
+  const norm = normalizeCampaignName(eventUtm || '');
+  if (filter === DIRECT_CAMPAIGN_SENTINEL) return !norm;
+  return norm === filter;
+}
 
 // Placement spellings split between two upstream sources:
 //   - Meta Insights API publisher_platform + platform_position →
@@ -72,5 +107,8 @@ module.exports = {
   normalizeAdName,
   normalizeCampaignName,
   normalizePlacement,
+  eventMatchesCampaign,
   PLACEMENT_ALIASES,
+  UTM_ALIASES,
+  DIRECT_CAMPAIGN_SENTINEL,
 };

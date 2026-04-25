@@ -138,7 +138,13 @@ module.exports = async (req, res) => {
         referrer: cleanStr(e.referrer),
         utm_source: cleanStr(e.utm_source),
         utm_medium: cleanStr(e.utm_medium),
-        utm_campaign: cleanStr(e.utm_campaign),
+        // utm_campaign is stored canonical: lowercased + slugged + alias-
+        // resolved, or null (NOT empty string) when the URL had no tag.
+        // Distinguishing null from "" matters for the Direct/Untagged
+        // dashboard bucket — the analytics scan groups null events under
+        // the direct sentinel. Old events stored as raw strings still
+        // re-normalize correctly at read time (idempotent slug).
+        utm_campaign: utmCampaignNorm || null,
         utm_content: utmContent,
         utm_placement: utmPlacement,
         ip_hash: ipHash,
