@@ -37,15 +37,19 @@
 
 const { getDateRange, normalizeRange, getDashboardDayBoundaries } = require('./_utils/dates');
 const { utcToMetaDate } = require('./_utils/meta-tz');
+const { normalizeCampaignName } = require('./_utils/attribution');
+const { utmFromCampaignId, campaignIdFromUtm } = require('./_utils/campaign-aliases');
 
-const cache = new Map(); // range -> { data, at }
+const cache = new Map(); // cacheKey -> { data, at } — key includes campaign filter
 const CACHE_MS = 60 * 1000;
 
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
   const range = normalizeRange(readQuery(req, 'range'));
-  const hit = cache.get(range);
+  const campaignFilter = normalizeCampaignName(readQuery(req, 'campaign') || '');
+  const cacheKey = `${range}:${campaignFilter || 'all'}`;
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) {
     return res.status(200).json(hit.data);
   }
@@ -54,6 +58,27 @@ module.exports = async (req, res) => {
   const token = process.env.META_ACCESS_TOKEN;
   if (!accountId || !token) {
     return res.status(500).json({ error: 'Meta env vars not configured' });
+  }
+
+  // Campaign filter → resolve to a Meta campaign_id via the alias map.
+  // An unknown utm_campaign produces an empty response rather than a
+  // silent unfiltered query — that catches typos in the URL early.
+  let campaignIdFilter = null;
+  if (campaignFilter) {
+    campaignIdFilter = campaignIdFromUtm(campaignFilter);
+    if (!campaignIdFilter) {
+      const empty = {
+        range,
+        campaign: campaignFilter,
+        timeRange: null,
+        dashboardRange: getDateRange(range),
+        summary: { spend: 0, impressions: 0, clicks: 0, reach: 0, ctr: 0, cpc: 0, cpm: 0 },
+        byAd: [], byPlacement: [], byCampaign: [],
+        warning: `Unknown utm_campaign "${campaignFilter}" — add it to api/_utils/campaign-aliases.js.`,
+      };
+      cache.set(cacheKey, { data: empty, at: Date.now() });
+      return res.status(200).json(empty);
+    }
   }
 
   // Translate dashboard-TZ window → epoch boundaries → Meta-TZ dates.
@@ -69,6 +94,14 @@ module.exports = async (req, res) => {
   };
   const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
+  // Campaign filter → Meta `filtering` parameter on campaign.id. Applied
+  // to summary / byAd / byPlacement so they match the filtered scope.
+  // Always fetch byCampaign without this filter so the comparison table
+  // can show every campaign side-by-side regardless of selection.
+  const filteringParam = campaignIdFilter
+    ? `&filtering=${encodeURIComponent(JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: [campaignIdFilter] }]))}`
+    : '';
+
   try {
     // Pull inline_link_clicks (Meta's "Results" in Ads Manager) instead of
     // the raw `clicks` field. `clicks` counts every engagement — likes,
@@ -77,14 +110,16 @@ module.exports = async (req, res) => {
     // link clicks ourselves rather than asking Meta (its returned ctr/cpc
     // are derived from raw clicks).
     const baseFields = 'spend,impressions,inline_link_clicks,cpm,reach';
-    const [summaryRows, perAdRows, perPlacementRows] = await Promise.all([
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}`),
-      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&${timeRangeParam}&limit=200`),
-      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}&breakdowns=publisher_platform,platform_position`),
+    const [summaryRows, perAdRows, perPlacementRows, perCampaignRows] = await Promise.all([
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}${filteringParam}`),
+      fetchInsights(accountId, token, `fields=${baseFields},ad_name&level=ad&${timeRangeParam}${filteringParam}&limit=200`),
+      fetchInsights(accountId, token, `fields=${baseFields}&level=account&${timeRangeParam}&breakdowns=publisher_platform,platform_position${filteringParam}`),
+      fetchInsights(accountId, token, `fields=${baseFields},campaign_name,campaign_id&level=campaign&${timeRangeParam}&limit=100`),
     ]);
 
     const data = {
       range,
+      campaign: campaignFilter || null,
       timeRange,
       dashboardRange,
       summary: summarize(summaryRows),
@@ -113,9 +148,28 @@ module.exports = async (req, res) => {
           ctr: impressions ? round2((linkClicks / impressions) * 100) : 0,
         };
       }),
+      byCampaign: perCampaignRows.map(r => {
+        const spend = parseFloat(r.spend) || 0;
+        const impressions = int(r.impressions);
+        const linkClicks = int(r.inline_link_clicks);
+        const utm = utmFromCampaignId(r.campaign_id);
+        return {
+          campaign_id: String(r.campaign_id || ''),
+          campaign_name: r.campaign_name || 'unnamed',
+          // utm_campaign is the canonical join key — null if the campaign
+          // hasn't been added to api/_utils/campaign-aliases.js yet. The
+          // dashboard surfaces unmapped campaigns via the raw campaign_name.
+          utm_campaign: utm,
+          spend: round2(spend),
+          impressions,
+          clicks: linkClicks,
+          ctr: impressions ? round2((linkClicks / impressions) * 100) : 0,
+          cpc: linkClicks ? round2(spend / linkClicks) : 0,
+        };
+      }),
     };
 
-    cache.set(range, { data, at: Date.now() });
+    cache.set(cacheKey, { data, at: Date.now() });
     res.status(200).json(data);
   } catch (err) {
     res.status(502).json({ error: `Meta API error: ${err.message}` });

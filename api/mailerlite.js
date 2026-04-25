@@ -25,65 +25,26 @@
 // }
 
 const { getDateRange, normalizeRange, utcToDashboardDate } = require('./_utils/dates');
+const {
+  normalizeAdName,
+  normalizeCampaignName,
+  normalizePlacement,
+} = require('./_utils/attribution');
 
-const cache = new Map(); // range -> { data, at }
+const cache = new Map(); // cacheKey -> { data, at } — key includes campaign filter
 const CACHE_MS = 60 * 1000;
-
-// Canonical normalizers. Meta ad names are user-typed ("2am Math") while
-// the UTM value MailerLite sees is whatever we put in the URL template
-// ("2am_math"). Placements have two sources with different spellings:
-// Meta Insights API returns publisher_platform+platform_position strings
-// ("Facebook_Feed", "Instagram_Instagram_reels"); the {{placement}} URL
-// macro substitutes different tokens at click time ("Facebook_Mobile_Feed",
-// "Instagram_Reels"). Same file MUST also be mirrored in dashboard.html.
-function normalizeAdName(s) {
-  return String(s || '')
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, '_')
-    .replace(/[^a-z0-9_]/g, '')
-    .replace(/_+/g, '_');
-}
-
-const PLACEMENT_ALIASES = {
-  'facebook_mobile_feed': 'facebook_feed',
-  'facebook_desktop_feed': 'facebook_feed',
-  'facebook_feed': 'facebook_feed',
-  'facebook_facebook_reels': 'facebook_reels',
-  'facebook_reels': 'facebook_reels',
-  'facebook_facebook_stories': 'facebook_stories',
-  'facebook_stories': 'facebook_stories',
-  'facebook_marketplace': 'facebook_marketplace',
-  'facebook_right_column': 'facebook_right_column',
-  'facebook_video_feeds': 'facebook_video_feeds',
-  'facebook_search': 'facebook_search',
-  'instagram_feed': 'instagram_feed',
-  'instagram_stream': 'instagram_feed',
-  'instagram_stories': 'instagram_stories',
-  'instagram_story': 'instagram_stories',
-  'instagram_reels': 'instagram_reels',
-  'instagram_instagram_reels': 'instagram_reels',
-  'instagram_explore': 'instagram_explore',
-  'instagram_shop': 'instagram_shop',
-  'audience_network_classic': 'audience_network',
-  'audience_network_rewarded_video': 'audience_network',
-  'audience_network_instream_video': 'audience_network',
-  'messenger_messenger_inbox': 'messenger_inbox',
-  'messenger_inbox': 'messenger_inbox',
-  'messenger_messenger_stories': 'messenger_stories',
-  'messenger_stories': 'messenger_stories',
-};
-
-function normalizePlacement(s) {
-  const lower = String(s || '').toLowerCase().trim().replace(/\s+/g, '_');
-  return PLACEMENT_ALIASES[lower] || lower;
-}
 
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
   const range = normalizeRange(readQuery(req, 'range'));
-  const hit = cache.get(range);
+  // Optional campaign filter — when set, every aggregate (subs counts +
+  // byAd / byPlacement / byCampaign breakdowns) restricts to subscribers
+  // whose utm_campaign matches the filter. Empty string = no filter.
+  const campaignFilter = normalizeCampaignName(readQuery(req, 'campaign') || '');
+  const cacheKey = `${range}:${campaignFilter || 'all'}`;
+
+  const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) {
     return res.status(200).json(hit.data);
   }
@@ -105,12 +66,31 @@ module.exports = async (req, res) => {
     const freeInWindow = filterByRange(free, dashboardRange);
     const paidInWindow = filterByRange(paid, dashboardRange);
 
+    // byCampaign aggregates over the *unfiltered* in-range set so the
+    // dashboard's "Which campaign is winning?" comparison table can show
+    // every campaign side by side, even when the page-level filter is
+    // narrowed to one of them.
+    const byCampaign = {};
+    for (const s of freeInWindow) {
+      const camp = normalizeCampaignName((s.fields && s.fields.utm_campaign) || '') || 'unknown';
+      byCampaign[camp] = (byCampaign[camp] || 0) + 1;
+    }
+
+    // Apply the campaign filter for everything else (counts + byAd +
+    // byPlacement). When unset, this is a no-op pass-through.
+    const matchesCampaign = (s) => {
+      if (!campaignFilter) return true;
+      const camp = normalizeCampaignName((s.fields && s.fields.utm_campaign) || '');
+      return camp === campaignFilter;
+    };
+    const freeInScope = freeInWindow.filter(matchesCampaign);
+    const paidInScope = paidInWindow.filter(matchesCampaign);
+
     // Aggregate into canonical keys so the dashboard can join against
-    // normalized Meta ad names / placements (see normalizeAdName +
-    // normalizePlacement above).
+    // normalized Meta ad names / placements (see api/_utils/attribution.js).
     const byAd = {};
     const byPlacement = {};
-    for (const s of freeInWindow) {
+    for (const s of freeInScope) {
       const adRaw = (s.fields && s.fields.utm_content) || 'unknown';
       const placementRaw = (s.fields && s.fields.utm_placement) || 'unknown';
       const ad = normalizeAdName(adRaw);
@@ -121,17 +101,21 @@ module.exports = async (req, res) => {
 
     const data = {
       range,
+      campaign: campaignFilter || null,
       dashboardRange,
       subscribers: {
+        // `free` / `paid` totals are all-time and unaffected by the
+        // campaign filter — they're the absolute group sizes.
         free: free.length,
         paid: paid.length,
-        freeInRange: freeInWindow.length,
-        paidInRange: paidInWindow.length,
+        freeInRange: freeInScope.length,
+        paidInRange: paidInScope.length,
       },
       byAd,
       byPlacement,
+      byCampaign,
     };
-    cache.set(range, { data, at: Date.now() });
+    cache.set(cacheKey, { data, at: Date.now() });
     res.status(200).json(data);
   } catch (err) {
     res.status(502).json({ error: `MailerLite API error: ${err.message}` });

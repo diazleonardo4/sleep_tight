@@ -109,7 +109,7 @@
   /* ---------- RANGE TOGGLE ---------- */
   .range {
     display: inline-flex; background: #fff; border-radius: 10px; padding: 4px;
-    box-shadow: 0 2px 8px rgba(26,39,68,0.06); margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06); margin-bottom: 12px;
   }
   .range__btn {
     background: transparent; border: none; padding: 8px 16px; border-radius: 7px;
@@ -118,6 +118,34 @@
   }
   .range__btn.is-active { background: var(--navy); color: #fff; }
   .range__btn:hover:not(.is-active) { color: var(--navy); }
+
+  /* Campaign filter pills — same control vocabulary as range, in gold so
+     "scope" controls (range = time, campaign = attribution) read as a
+     pair without competing visually. */
+  .campaign-filter {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+  .campaign-filter__label {
+    font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint);
+  }
+  .campaign-filter__pills {
+    display: inline-flex; background: #fff; border-radius: 10px; padding: 4px;
+    box-shadow: 0 2px 8px rgba(26,39,68,0.06);
+  }
+  .campaign-filter__btn {
+    background: transparent; border: none; padding: 7px 14px; border-radius: 7px;
+    font-family: 'Quicksand', sans-serif; font-weight: 600; font-size: 13px;
+    color: var(--text-muted); transition: all 0.15s;
+  }
+  .campaign-filter__btn.is-active { background: var(--gold); color: var(--navy); }
+  .campaign-filter__btn:hover:not(.is-active) { color: var(--navy); }
+
+  /* "Which campaign is winning?" highlight row + cells. */
+  tr.row--winner { background: var(--gold-soft); }
+  .subs-cell.is-strong { color: var(--gold); font-weight: 700; }
+  .subs-cell.is-muted { color: var(--text-faint); }
 
   /* ---------- SECTIONS & CARDS ---------- */
   .section { margin-bottom: 36px; }
@@ -346,6 +374,17 @@
     <button class="range__btn" data-range="30d" type="button">Last 30 days</button>
   </div>
 
+  <!-- CAMPAIGN FILTER — narrows KPIs / funnel / ad table to one campaign.
+       The "Which campaign is winning?" comparison table below always
+       shows every campaign regardless of selection. Pills are populated
+       at boot from CAMPAIGN_DISPLAY_NAMES. -->
+  <div class="campaign-filter" role="tablist" aria-label="Campaign filter">
+    <span class="campaign-filter__label">Campaign</span>
+    <div class="campaign-filter__pills" id="campaignFilterPills">
+      <button class="campaign-filter__btn is-active" data-campaign="" type="button">All campaigns</button>
+    </div>
+  </div>
+
   <!-- LAYER 1 — HEALTH -->
   <div class="section">
     <div class="section__head"><h2 id="metricsTitle">Last 7 days</h2></div>
@@ -387,6 +426,19 @@
     </div>
   </div>
 
+  <!-- LAYER 3 — CAMPAIGN COMPARISON.
+       Always shows every campaign side-by-side, even when the campaign
+       filter above is narrowed to one — this is the A/B comparison view. -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Which campaign is winning?</h2>
+      <span class="eyebrow" id="campaignTableRangeLabel">sorted by subs · last 7 days</span>
+    </div>
+    <div class="table-wrap" id="campaignTableWrap">
+      <div class="empty">Loading…</div>
+    </div>
+  </div>
+
   <!-- LAYER 3a — WINNING AD -->
   <div class="section">
     <div class="section__head">
@@ -422,9 +474,19 @@
 <script>
   const TOKEN_KEY = 'sleep_tight_dashboard_token';
   const RANGE_KEY = 'sleep_tight_dashboard_range';
+  const CAMPAIGN_KEY = 'sleep_tight_dashboard_campaign';
   const VALID_RANGES = ['today', '7d', '30d'];
   const RANGE_LABELS = { today: 'today', '7d': 'last 7 days', '30d': 'last 30 days' };
   const RANGE_TITLES = { today: 'Today', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+
+  // Display labels for utm_campaign tokens — mirror of
+  // api/_utils/campaign-display.js. Falls back to the raw token so
+  // unmapped campaigns still render readably until added here.
+  const CAMPAIGN_DISPLAY_NAMES = {
+    sleep_tight_traffic: 'Traffic',
+    sleep_tight_lead_target: 'Leads',
+  };
+  const campaignDisplay = (utm) => CAMPAIGN_DISPLAY_NAMES[utm] || utm || 'Unknown';
 
   // Benchmarks for health/wellness niche (2026).
   // Funnel rates are percentages; cost benchmarks are USD.
@@ -454,7 +516,7 @@
   const COP_PER_USD = 4000;
   const copToUsd = (cop) => Number.isFinite(cop) ? cop / COP_PER_USD : NaN;
 
-  // Canonical normalizers — must stay in sync with api/mailerlite.js.
+  // Canonical normalizers — must stay in sync with api/_utils/attribution.js.
   // Meta ad names are user-typed (e.g., "2am Math") and don't match the
   // utm_content we embed in URLs ("2am_math"). Placements have two
   // sources with different spellings: Meta Insights API returns names
@@ -469,6 +531,7 @@
       .replace(/[^a-z0-9_]/g, '')
       .replace(/_+/g, '_');
   }
+  const normalizeCampaignName = normalizeAdName;
   const PLACEMENT_ALIASES = {
     'facebook_mobile_feed': 'facebook_feed',
     'facebook_desktop_feed': 'facebook_feed',
@@ -502,7 +565,11 @@
     return PLACEMENT_ALIASES[lower] || lower;
   }
 
-  const state = { meta: null, mailerlite: null, analytics: null, email: null, config: null, range: getInitialRange() };
+  const state = {
+    meta: null, mailerlite: null, analytics: null, email: null, config: null,
+    range: getInitialRange(),
+    campaign: getInitialCampaign(),
+  };
 
   function getInitialRange() {
     const urlRange = new URLSearchParams(location.search).get('range');
@@ -510,6 +577,13 @@
     const stored = sessionStorage.getItem(RANGE_KEY);
     if (stored && VALID_RANGES.includes(stored)) return stored;
     return '7d';
+  }
+
+  function getInitialCampaign() {
+    const urlCampaign = new URLSearchParams(location.search).get('campaign') || '';
+    if (urlCampaign) return normalizeCampaignName(urlCampaign);
+    const stored = sessionStorage.getItem(CAMPAIGN_KEY) || '';
+    return stored ? normalizeCampaignName(stored) : '';
   }
 
   function setRange(range) {
@@ -523,6 +597,20 @@
     refreshAll();
   }
 
+  function setCampaign(campaign) {
+    const c = campaign || '';
+    if (c === state.campaign) return;
+    state.campaign = c;
+    if (c) sessionStorage.setItem(CAMPAIGN_KEY, c);
+    else sessionStorage.removeItem(CAMPAIGN_KEY);
+    const url = new URL(location.href);
+    if (c) url.searchParams.set('campaign', c);
+    else url.searchParams.delete('campaign');
+    history.replaceState(null, '', url.toString());
+    updateCampaignUi();
+    refreshAll();
+  }
+
   function updateRangeUi() {
     document.querySelectorAll('.range__btn').forEach(b => {
       b.classList.toggle('is-active', b.dataset.range === state.range);
@@ -531,6 +619,41 @@
     document.getElementById('funnelRangeLabel').textContent = RANGE_LABELS[state.range];
     document.getElementById('adTableRangeLabel').textContent = `sorted by $ / sub · ${RANGE_LABELS[state.range]}`;
     document.getElementById('placementTableRangeLabel').textContent = `sorted by $ / sub · ${RANGE_LABELS[state.range]}`;
+    const campaignLabel = document.getElementById('campaignTableRangeLabel');
+    if (campaignLabel) campaignLabel.textContent = `sorted by subs · ${RANGE_LABELS[state.range]}`;
+  }
+
+  // Pills are rebuilt every refresh from the union of (a) campaigns we
+  // know about (CAMPAIGN_DISPLAY_NAMES) and (b) campaigns Meta has spend
+  // for in this range. That way a new campaign appears in the picker as
+  // soon as Meta returns data for it, even before its display name is
+  // mapped here.
+  function rebuildCampaignPills() {
+    const wrap = document.getElementById('campaignFilterPills');
+    if (!wrap) return;
+    const utms = new Set(Object.keys(CAMPAIGN_DISPLAY_NAMES));
+    const meta = state.meta || {};
+    (meta.byCampaign || []).forEach(c => { if (c.utm_campaign) utms.add(c.utm_campaign); });
+    if (state.campaign) utms.add(state.campaign);
+
+    const ordered = Array.from(utms).sort((a, b) => campaignDisplay(a).localeCompare(campaignDisplay(b)));
+    const pills = [
+      `<button class="campaign-filter__btn" data-campaign="" type="button">All campaigns</button>`,
+      ...ordered.map(u =>
+        `<button class="campaign-filter__btn" data-campaign="${escapeHtml(u)}" type="button">${escapeHtml(campaignDisplay(u))}</button>`
+      ),
+    ].join('');
+    wrap.innerHTML = pills;
+    wrap.querySelectorAll('.campaign-filter__btn').forEach(b => {
+      b.addEventListener('click', () => setCampaign(b.dataset.campaign || ''));
+    });
+    updateCampaignUi();
+  }
+
+  function updateCampaignUi() {
+    document.querySelectorAll('.campaign-filter__btn').forEach(b => {
+      b.classList.toggle('is-active', (b.dataset.campaign || '') === state.campaign);
+    });
   }
 
   // ---------- Login ----------
@@ -588,11 +711,16 @@
     refreshBtn.textContent = '↻ Loading…';
 
     const r = encodeURIComponent(state.range);
+    // Campaign filter is appended to /api/meta, /api/mailerlite, and
+    // /api/analytics so they all narrow consistently. The byCampaign
+    // arrays in each response always cover every campaign regardless,
+    // which is what the comparison table reads from.
+    const c = state.campaign ? `&campaign=${encodeURIComponent(state.campaign)}` : '';
     const configPromise = state.config ? Promise.resolve({ status: 'fulfilled', value: state.config }) : null;
     const [meta, ml, analytics, email, config] = await Promise.allSettled([
-      fetchJson(`/api/meta?range=${r}`),
-      fetchJson(`/api/mailerlite?range=${r}`),
-      fetchJson(`/api/analytics?range=${r}`),
+      fetchJson(`/api/meta?range=${r}${c}`),
+      fetchJson(`/api/mailerlite?range=${r}${c}`),
+      fetchJson(`/api/analytics?range=${r}${c}`),
       fetchJson('/api/email-stats'),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
     ]);
@@ -611,6 +739,7 @@
     state.email = email.status === 'fulfilled' ? email.value : { available: false, reason: email.reason?.message || 'Email stats unavailable' };
     if (config.status === 'fulfilled' && config.value) state.config = config.value;
 
+    rebuildCampaignPills();
     render();
     renderHeaderCaption();
     refreshBtn.disabled = false;
@@ -744,9 +873,122 @@
     setSecondary('cost-paid', cpPaidCop != null ? fmt.cop(cpPaidCop) : '');
 
     renderFunnel();
+    renderCampaignTable();
     renderAdTable();
     renderPlacementTable();
     renderEmailPanel();
+  }
+
+  // ---------- Campaign comparison table ----------
+  // Joins three sources keyed on utm_campaign:
+  //   - state.meta.byCampaign        (spend, clicks, ctr — always all campaigns)
+  //   - state.analytics.byCampaign   (pageviews, engaged, submits)
+  //   - state.mailerlite.byCampaign  (subs)
+  // The selected page-level filter does NOT narrow this table — it's the
+  // A/B comparison view, so it always shows every campaign in the range.
+  function renderCampaignTable() {
+    const wrap = document.getElementById('campaignTableWrap');
+    const m = state.meta || {};
+    const a = state.analytics || {};
+    const ml = state.mailerlite || {};
+
+    if (m.error && a.error && ml.error) {
+      wrap.innerHTML = `<div class="error">${escapeHtml(m.error || a.error || ml.error)}</div>`;
+      return;
+    }
+
+    const metaByCampaign = (m.byCampaign || []);
+    const trafficByCampaign = (a.byCampaign || []);
+    const subsByCampaign = (ml.byCampaign || {});
+
+    // Index by utm_campaign (falling back to a stable key derived from
+    // campaign_id so unmapped Meta campaigns still get a row).
+    const rows = new Map();
+    const ensure = (key) => {
+      let r = rows.get(key);
+      if (!r) {
+        r = {
+          utm: key, campaign_id: '', campaign_name: '',
+          spend: 0, clicks: 0, ctr: 0, impressions: 0,
+          pageviews: 0, engaged: 0, submits: 0, subs: 0,
+        };
+        rows.set(key, r);
+      }
+      return r;
+    };
+
+    metaByCampaign.forEach(c => {
+      const key = c.utm_campaign || `id:${c.campaign_id}`;
+      const r = ensure(key);
+      r.campaign_id = c.campaign_id;
+      r.campaign_name = c.campaign_name;
+      r.spend = c.spend; r.clicks = c.clicks; r.ctr = c.ctr; r.impressions = c.impressions;
+    });
+    trafficByCampaign.forEach(c => {
+      const r = ensure(c.campaign);
+      r.pageviews = c.pageviews; r.engaged = c.engaged; r.submits = c.submits;
+    });
+    Object.entries(subsByCampaign).forEach(([utm, count]) => {
+      const r = ensure(utm);
+      r.subs = count;
+    });
+
+    const list = Array.from(rows.values())
+      .filter(r => r.spend > 0 || r.pageviews > 0 || r.subs > 0)
+      .sort((a, b) => (b.subs - a.subs) || (b.spend - a.spend));
+
+    if (!list.length) {
+      wrap.innerHTML = `<div class="empty">No campaign data yet for ${RANGE_LABELS[state.range]}.</div>`;
+      return;
+    }
+
+    // Highlight the row with the lowest cost-per-sub among campaigns
+    // with at least 2 subs — same minimum-sample idea as KILL_MIN_CLICKS,
+    // but lower because campaigns are coarser than ads.
+    const winnerKey = (() => {
+      const eligible = list.filter(r => r.subs >= 2 && r.spend > 0);
+      if (!eligible.length) return null;
+      const ranked = eligible.slice().sort((a, b) => (a.spend / a.subs) - (b.spend / b.subs));
+      return ranked[0].utm;
+    })();
+
+    wrap.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Campaign</th>
+          <th class="num">Spend</th>
+          <th class="num">Clicks</th>
+          <th class="num">CTR</th>
+          <th class="num">Pageviews</th>
+          <th class="num">Engaged</th>
+          <th class="num">Subs</th>
+          <th class="num">Cost / Sub</th>
+        </tr></thead>
+        <tbody>
+          ${list.map(r => {
+            const cps = r.subs > 0 ? r.spend / r.subs : null;
+            const cpsCell = cps != null ? fmt.dualInline(cps) : '—';
+            const subCellCls = r.subs > 0 ? 'subs-cell is-strong' : 'subs-cell is-muted';
+            const rowCls = r.utm === winnerKey ? 'row--winner' : '';
+            const display = r.utm.startsWith('id:')
+              ? `${escapeHtml(r.campaign_name || 'Unmapped')} <span style="color:var(--text-faint);font-weight:400;font-size:11px">(unmapped)</span>`
+              : escapeHtml(campaignDisplay(r.utm));
+            return `
+              <tr class="${rowCls}">
+                <td>${display}</td>
+                <td class="num">${fmt.dualInline(r.spend)}</td>
+                <td class="num">${fmt.int(r.clicks)}</td>
+                <td class="num">${fmt.pct(r.ctr)}</td>
+                <td class="num">${fmt.int(r.pageviews)}</td>
+                <td class="num">${fmt.int(r.engaged)}</td>
+                <td class="num ${subCellCls}">${fmt.int(r.subs)}</td>
+                <td class="num">${cpsCell}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
   }
 
   // ---------- Funnel ----------
@@ -1001,6 +1243,7 @@
     const summary = m.summary || {};
     const rows = [['section', 'key', 'value']];
     rows.push(['range', 'selected', state.range]);
+    rows.push(['campaign', 'selected', state.campaign || 'all']);
     // spend_cop = raw Meta value (ad account currency). spend_usd = converted
     // at COP_PER_USD for cross-benchmark comparisons. cpc/cpm stay COP.
     rows.push(['summary', 'spend_cop', summary.spend ?? '']);

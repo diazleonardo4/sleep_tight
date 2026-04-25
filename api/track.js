@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 const { getRedis } = require('../lib/redis');
 const { utcToDashboardDate } = require('./_utils/dates');
+const { normalizeCampaignName } = require('./_utils/attribution');
 
 const VALID_EVENTS = new Set([
   'pageview',
@@ -121,6 +122,8 @@ module.exports = async (req, res) => {
       const name = String(e.event);
       const utmContent = cleanStr(e.utm_content);
       const utmPlacement = cleanStr(e.utm_placement);
+      const utmCampaignRaw = cleanStr(e.utm_campaign);
+      const utmCampaignNorm = normalizeCampaignName(utmCampaignRaw);
       const metadata = typeof e.metadata === 'object' && e.metadata ? e.metadata : {};
       const visitorId = cleanId(e.visitor_id, 40);
       const sessionId = cleanId(e.session_id, 40);
@@ -163,6 +166,15 @@ module.exports = async (req, res) => {
       }
       if (utmPlacement) {
         const k = `count:${date}:${name}:utm_placement:${utmPlacement}`;
+        pipeline.incr(k);
+        pipeline.expire(k, COUNTER_TTL);
+      }
+      // Per-campaign counters use the normalized utm_campaign so the
+      // dashboard can join against Meta's campaign data through the
+      // campaign-aliases map. Started writing at deploy time — older
+      // dates will have no byCampaign rows; that's expected.
+      if (utmCampaignNorm) {
+        const k = `count:${date}:${name}:byCampaign:${utmCampaignNorm}`;
         pipeline.incr(k);
         pipeline.expire(k, COUNTER_TTL);
       }
