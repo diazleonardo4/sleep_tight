@@ -13,8 +13,13 @@
     MAILERLITE_FREE_EBOOK_GROUP_ID   ID of "Free Ebook Downloads" group
     MAILERLITE_PAID_BUNDLE_GROUP_ID  ID of "Paid Bundle Buyers" group
   Optional (enables Layer 3c — Email engagement panel):
-    MAILERLITE_EMAIL_1_CAMPAIGN_ID   Welcome email campaign ID
-    MAILERLITE_EMAIL_3_CAMPAIGN_ID   Pitch email campaign ID
+    MAILERLITE_AUTOMATION_ID         Sleep Tight automation ID (parent
+                                     of all email steps). Required to
+                                     enable the email card at all.
+    MAILERLITE_EMAIL_1_STEP_ID       Step ID for "Email 1" within the
+                                     automation. Optional — when unset,
+                                     the per-email card stays empty.
+    MAILERLITE_EMAIL_3_STEP_ID       Step ID for "Email 3" — same.
 
   Access: https://<your-domain>/dashboard
 -->
