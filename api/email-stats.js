@@ -1,254 +1,313 @@
 // GET /api/email-stats  (header: x-auth-token)
 //
-// Returns open/click stats for individual steps in the Sleep Tight
-// MailerLite automation. Used by the dashboard's Layer 3c panel.
+// Returns engagement stats for the two MailerLite automations Sleep
+// Tight runs:
+//   - welcome  : 3-day free-funnel sequence triggered on free signup
+//   - purchase : 7-day post-purchase sequence triggered after a paid sale
 //
-// Sleep Tight runs as an automation (subscribe → Email 1 → wait →
-// Email 3 → ...), NOT a one-shot campaign broadcast. The Connect API
-// distinguishes the two with separate endpoints; we hit the
-// automations endpoint and pluck out the steps we care about.
+// MailerLite distinguishes campaigns (one-shot broadcasts) from
+// automations (triggered email sequences). Sleep Tight uses
+// automations, so we hit the Connect /api/automations/{id} endpoint.
 //
-// Env vars:
-//   MAILERLITE_API_TOKEN         (required) — Connect API token. The
-//                                 classic /api/v2 token will 401 here.
-//   MAILERLITE_AUTOMATION_ID     (required to enable card) — parent
-//                                 automation containing all email steps.
-//   MAILERLITE_EMAIL_1_STEP_ID   (optional) — step ID for "Email 1".
-//   MAILERLITE_EMAIL_3_STEP_ID   (optional) — step ID for "Email 3".
+// Env vars (all optional — if a *_AUTOMATION_ID is unset, that key is
+// null in the response and the dashboard renders a "Not configured"
+// state for that card without erroring):
 //
-// Bootstrapping the step IDs: hit the automation endpoint once
-// manually with the token to see the available step IDs, then plug
-// the right ones into Vercel env. If a STEP_ID is set but doesn't
-// match any step in the automation, the response surfaces every
-// available step ID so the misconfiguration is obvious.
+//   MAILERLITE_API_TOKEN                   Connect-API token (NOT classic v2)
 //
-// Response shape when configured:
+//   MAILERLITE_WELCOME_AUTOMATION_ID       3-day welcome sequence
+//   MAILERLITE_WELCOME_EMAIL_1_STEP_ID     optional, welcome email step
+//   MAILERLITE_WELCOME_EMAIL_3_STEP_ID     optional, bundle pitch step
+//
+//   MAILERLITE_PURCHASE_AUTOMATION_ID      7-day post-purchase sequence
+//   MAILERLITE_PURCHASE_EMAIL_1_STEP_ID    optional
+//   MAILERLITE_PURCHASE_EMAIL_3_STEP_ID    optional
+//
+// Each automation is fetched in parallel and handled independently —
+// if the welcome call 200s and the purchase call 404s, the response
+// returns full welcome data alongside an error stub for purchase. The
+// two cards on the dashboard render independently from this output.
+//
+// Response shape:
 // {
-//   available: true,
-//   automation_id, automation_name,
-//   automation_totals: { sent, opens, opens_unique, clicks, clicks_unique },
-//   email1: {  // present when MAILERLITE_EMAIL_1_STEP_ID resolves
-//     step_id, step_name, subject,
-//     sent, opens, clicks,
-//     opens_unique, clicks_unique,         // snake_case (new spec)
-//     opensUnique, clicksUnique,           // camelCase (dashboard renderer)
-//     open_rate, click_rate,               // 0..1 fraction (new spec)
-//     openRate, clickRate,                 // % out of 100 (dashboard renderer)
-//   },
-//   email3: { ...same shape... },
+//   fetched_at: <epoch ms>,
+//   welcome:  <automationResult> | null,
+//   purchase: <automationResult> | null,
 // }
+// where <automationResult> is one of:
+//   { error: "...", automation_id }                       // fetch failed
+//   { automation_id, automation_name, status,
+//     subscribers_in_flow, total_sent, total_opens, total_clicks,
+//     overall_open_rate, overall_click_rate,              // fractions 0..1
+//     email_1: {step_id, step_name, sent, opens, clicks,
+//               open_rate, click_rate} | null,
+//     email_3: {...} | null,
+//     available_steps: [{id, name, type}],                // every step in flow
+//     missing_steps: ["welcome_email_1", ...]             // when step IDs misconfigured
+//   }
 //
-// Graceful fallback: if MAILERLITE_API_TOKEN or MAILERLITE_AUTOMATION_ID
-// is unset, responds 200 with { available: false, reason } so the
-// dashboard renders a "not configured" state without breaking layout.
-// Real API errors (401/403/404/network) surface with a verbose message
-// that names the env var to fix — Leo reads these and diagnoses
-// directly, so they need to actually be useful.
+// Cache: 5 min memo per request signature so dashboard refreshes
+// don't burn through MailerLite quota. Cache key includes both
+// automation IDs + step IDs so an env-var change invalidates
+// immediately on next deploy.
 
 const cache = new Map(); // key -> { data, at }
-const CACHE_MS = 5 * 60 * 1000; // 5 min — automation stats change slowly
+const CACHE_MS = 5 * 60 * 1000;
+
+const AUTOMATION_KEYS = [
+  {
+    slot: 'welcome',
+    label: '3-day welcome sequence',
+    automationVar: 'MAILERLITE_WELCOME_AUTOMATION_ID',
+    step1Var: 'MAILERLITE_WELCOME_EMAIL_1_STEP_ID',
+    step3Var: 'MAILERLITE_WELCOME_EMAIL_3_STEP_ID',
+  },
+  {
+    slot: 'purchase',
+    label: '7-day post-purchase sequence',
+    automationVar: 'MAILERLITE_PURCHASE_AUTOMATION_ID',
+    step1Var: 'MAILERLITE_PURCHASE_EMAIL_1_STEP_ID',
+    step3Var: 'MAILERLITE_PURCHASE_EMAIL_3_STEP_ID',
+  },
+];
 
 module.exports = async (req, res) => {
   if (!checkAuth(req, res)) return;
 
   const token = process.env.MAILERLITE_API_TOKEN;
-  const automationId = process.env.MAILERLITE_AUTOMATION_ID;
-  const email1StepId = process.env.MAILERLITE_EMAIL_1_STEP_ID || '';
-  const email3StepId = process.env.MAILERLITE_EMAIL_3_STEP_ID || '';
-
   if (!token) {
-    return res.status(200).json({ available: false, reason: 'MAILERLITE_API_TOKEN not set' });
-  }
-  if (!automationId) {
-    return res.status(200).json({ available: false, reason: 'MAILERLITE_AUTOMATION_ID not set' });
+    return res.status(200).json({
+      fetched_at: Date.now(),
+      welcome: null,
+      purchase: null,
+      reason: 'MAILERLITE_API_TOKEN not set',
+    });
   }
 
-  const cacheKey = `${automationId}:${email1StepId}:${email3StepId}`;
+  const config = AUTOMATION_KEYS.map(k => ({
+    ...k,
+    automationId: process.env[k.automationVar] || '',
+    step1Id: process.env[k.step1Var] || '',
+    step3Id: process.env[k.step3Var] || '',
+  }));
+
+  // Cache key includes both automation triplets so any env change is
+  // visible on the next request — Vercel deploys reset the function
+  // process anyway, but this keeps local dev sane too.
+  const cacheKey = config
+    .map(c => `${c.slot}=${c.automationId}:${c.step1Id}:${c.step3Id}`)
+    .join('|');
   const hit = cache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_MS) {
-    return res.status(200).json(hit.data);
+    return res.status(200).json({
+      ...hit.data,
+      cached: true,
+      cached_at: hit.at,
+    });
   }
 
-  try {
-    const automation = await fetchAutomation(automationId, token);
-    const data = buildResponse(automation, automationId, email1StepId, email3StepId);
-    cache.set(cacheKey, { data, at: Date.now() });
-    return res.status(200).json(data);
-  } catch (err) {
-    return res.status(502).json({ error: `Email stats error: ${err.message}` });
-  }
+  // Fire both automation fetches in parallel; allSettled so a single
+  // failure doesn't hide the other side's data. Each promise resolves
+  // to either a successful automationResult or an error stub — we
+  // never reject from inside fetchOne(), so allSettled is defensive.
+  const results = await Promise.all(config.map(c => fetchOne(c, token)));
+  const data = {
+    fetched_at: Date.now(),
+    welcome: results[0],
+    purchase: results[1],
+  };
+  cache.set(cacheKey, { data, at: Date.now() });
+  return res.status(200).json(data);
 };
 
-async function fetchAutomation(automationId, token) {
+// fetchOne — never throws. Returns one of:
+//   null                                  (automation not configured)
+//   { error, automation_id }              (API call failed)
+//   { ...full automationResult shape }    (success)
+async function fetchOne(c, token) {
+  if (!c.automationId) return null;
+
+  let body;
+  try {
+    body = await callMailerLite(c.automationId, token);
+  } catch (err) {
+    return {
+      automation_id: c.automationId,
+      slot: c.slot,
+      error: err.message,
+    };
+  }
+  return shapeAutomation(body, c);
+}
+
+async function callMailerLite(automationId, token) {
   const url = `https://connect.mailerlite.com/api/automations/${encodeURIComponent(automationId)}`;
   let r;
   try {
     r = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     });
   } catch (e) {
-    throw new Error(`Network error reaching MailerLite Connect API: ${e.message}`);
+    throw new Error(`MailerLite API unreachable: ${e.message}`);
   }
 
   if (r.ok) {
-    const body = await r.json();
-    return body.data || body || {};
+    const json = await r.json();
+    return json.data || json || {};
   }
 
-  // Non-OK: surface a verbose, action-oriented error. The current
-  // 404 message ("HTTP 404 on campaign X") was already useful for
-  // diagnosis — these aim for the same clarity.
   let bodyText = '';
   try { bodyText = (await r.text()).slice(0, 200); } catch (_) {}
   switch (r.status) {
     case 401:
       throw new Error(
         `Invalid or expired MailerLite API token (HTTP 401). ` +
-        `Note: classic /api/v2 tokens will 401 against the Connect API — ` +
-        `regenerate at dashboard.mailerlite.com → Integrations → API ` +
-        `(make sure you're in the new MailerLite, not Classic).`
+        `Classic v2 tokens will 401 here — regenerate at ` +
+        `dashboard.mailerlite.com → Integrations → API.`
       );
     case 403:
       throw new Error(
-        `MailerLite token lacks permission to read automations (HTTP 403). ` +
-        `Add the automations scope to the API token.`
+        `MailerLite token lacks the automations:read scope (HTTP 403).`
       );
     case 404:
       throw new Error(
         `Automation ${automationId} not found (HTTP 404). ` +
-        `Verify MAILERLITE_AUTOMATION_ID — get the ID from MailerLite → ` +
-        `Automations → click your sequence → URL contains the ID.`
+        `Check the matching MAILERLITE_*_AUTOMATION_ID env var — ` +
+        `find IDs in MailerLite → Automations → click sequence → URL.`
       );
     case 429:
-      throw new Error(`MailerLite rate limit hit (HTTP 429). Try again in a minute.`);
+      throw new Error(`MailerLite rate limit hit (HTTP 429). Retry shortly.`);
     default:
-      throw new Error(`MailerLite Connect API HTTP ${r.status} on automation ${automationId}: ${bodyText}`);
+      throw new Error(
+        `MailerLite Connect API HTTP ${r.status} on automation ${automationId}: ${bodyText}`
+      );
   }
 }
 
-function buildResponse(automation, automationId, email1StepId, email3StepId) {
-  const steps = Array.isArray(automation.steps) ? automation.steps : [];
+// Build the per-automation result object the dashboard renders. Pulls
+// the configured email-1 / email-3 steps out of the steps[] array,
+// aggregates totals across every email step, and surfaces the full
+// step list so a misconfigured STEP_ID is debuggable from the response
+// alone (no need to curl the API separately).
+function shapeAutomation(automation, config) {
+  const a = automation || {};
+  const steps = Array.isArray(a.steps) ? a.steps : [];
   const stepsById = new Map(steps.map(s => [String(s.id || ''), s]));
-  const availableIds = steps.map(s => `${s.id} (${s.name || s.subject || s.type || 'unnamed'})`);
 
-  const emailEntry = (label, stepId) => {
-    if (!stepId) return undefined;
+  // Available steps list — only emit "real" steps (drop pure delays
+  // unless the step has email content, which we sniff via the type
+  // and the presence of stats fields).
+  const availableSteps = steps.map(s => ({
+    id: s.id != null ? String(s.id) : '',
+    name: s.name || s.subject || '',
+    type: s.type || '',
+  }));
+
+  const buildEmail = (slotName, stepId) => {
+    if (!stepId) return null;
     const step = stepsById.get(String(stepId));
     if (!step) {
-      // Don't throw — surface the missing-step problem inline so the
-      // other email card can still render. The dashboard's emailCard()
-      // handles undefined gracefully (renders zeros), and we tag the
-      // response with a clear missing_steps array on the way out.
-      return { step_id: stepId, missing: true };
+      return {
+        step_id: stepId,
+        step_name: '',
+        missing: true,
+      };
     }
     return formatStep(step);
   };
 
-  const email1 = emailEntry('email1', email1StepId);
-  const email3 = emailEntry('email3', email3StepId);
+  const email1 = buildEmail('email_1', config.step1Id);
+  const email3 = buildEmail('email_3', config.step3Id);
 
-  // Build a list of misconfigured step IDs (set in env but not found
-  // in the automation). Surfacing this on success lets the dashboard
-  // — or anyone curl'ing the endpoint — see exactly what to fix
-  // without having to chase a stack trace.
-  const missing = [];
-  if (email1StepId && !stepsById.has(String(email1StepId))) {
-    missing.push({ slot: 'email1', configured_step_id: email1StepId });
+  const missingSteps = [];
+  if (config.step1Id && !stepsById.has(String(config.step1Id))) {
+    missingSteps.push(`${config.slot}_email_1=${config.step1Id}`);
   }
-  if (email3StepId && !stepsById.has(String(email3StepId))) {
-    missing.push({ slot: 'email3', configured_step_id: email3StepId });
+  if (config.step3Id && !stepsById.has(String(config.step3Id))) {
+    missingSteps.push(`${config.slot}_email_3=${config.step3Id}`);
   }
 
-  const totals = aggregateTotals(steps);
+  // Aggregate totals across every email step (not just the two
+  // configured ones) — overall_open_rate is the metric we want
+  // surfaced on the card header even when the operator hasn't
+  // bothered with step-level config yet.
+  let totalSent = 0, totalOpens = 0, totalClicks = 0, totalOpensUnique = 0, totalClicksUnique = 0;
+  for (const step of steps) {
+    const s = formatStep(step);
+    if (s.sent === 0 && s.opens === 0 && s.clicks === 0) continue; // skip non-email steps
+    totalSent += s.sent;
+    totalOpens += s.opens;
+    totalClicks += s.clicks;
+    totalOpensUnique += s.opens_unique;
+    totalClicksUnique += s.clicks_unique;
+  }
 
-  const out = {
-    available: true,
-    automation_id: automation.id || automationId,
-    automation_name: automation.name || automation.title || '',
-    automation_totals: totals,
-    email1,
-    email3,
+  return {
+    automation_id: a.id || config.automationId,
+    automation_name: a.name || a.title || '',
+    status: a.status || '',
+    subscribers_in_flow: extractSubscribersInFlow(a),
+    total_sent: totalSent,
+    total_opens: totalOpens,
+    total_opens_unique: totalOpensUnique,
+    total_clicks: totalClicks,
+    total_clicks_unique: totalClicksUnique,
+    overall_open_rate: totalSent > 0 ? round4(totalOpensUnique / totalSent) : 0,
+    overall_click_rate: totalSent > 0 ? round4(totalClicksUnique / totalSent) : 0,
+    email_1: email1,
+    email_3: email3,
+    available_steps: availableSteps,
+    missing_steps: missingSteps.length ? missingSteps : undefined,
   };
-  if (missing.length) {
-    out.missing_steps = missing;
-    out.available_step_ids = availableIds;
-    // Also stamp a top-level human-readable warning so the dashboard's
-    // .error renderer (if we ever wire one) has something to show.
-    out.warning =
-      `Configured step ID(s) not found in automation ${automation.id || automationId}: ` +
-      `${missing.map(m => `${m.slot}=${m.configured_step_id}`).join(', ')}. ` +
-      `Available step IDs: ${availableIds.join('; ') || '(automation has no steps)'}.`;
-  }
-  return out;
 }
 
-// MailerLite returns step stats in a few shapes depending on account
-// age and endpoint version: top-level (sent/opens_count/...), nested
-// under .stats, or under .data.stats. We probe all three before
-// falling back to zeros so missing fields render as 0 instead of NaN.
+// MailerLite's automation response carries the active-subscriber
+// count in different fields depending on account vintage; probe
+// every shape we've seen before falling back to 0. The dashboard
+// uses this to render "Waiting for first purchase" when an
+// automation is armed but empty.
+function extractSubscribersInFlow(a) {
+  const stats = a.stats || a.statistics || {};
+  return num(pick(
+    a.subscribers_count,
+    a.total_audience,
+    a.audience_count,
+    a.recipients_count,
+    stats.subscribers_count,
+    stats.total_audience,
+    stats.unique_recipients,
+    stats.recipients_count
+  ));
+}
+
 function formatStep(step) {
   const s = step || {};
   const stats = s.stats || s.statistics || {};
 
-  const sent          = num(pick(stats.sent, stats.sent_count, s.sent, s.sent_count, s.total_sent));
-  const opens         = num(pick(stats.opens_count, stats.opens, s.opens_count, s.opens, s.total_opens));
-  const opensUnique   = num(pick(
+  const sent = num(pick(stats.sent, stats.sent_count, s.sent, s.sent_count, s.total_sent));
+  const opens = num(pick(stats.opens_count, stats.opens, s.opens_count, s.opens, s.total_opens));
+  const opensUnique = num(pick(
     stats.unique_opens_count, stats.unique_opens, stats.opens_unique,
     s.unique_opens_count, s.unique_opens, s.opens_unique
   ));
-  const clicks        = num(pick(stats.clicks_count, stats.clicks, s.clicks_count, s.clicks, s.total_clicks));
-  const clicksUnique  = num(pick(
+  const clicks = num(pick(stats.clicks_count, stats.clicks, s.clicks_count, s.clicks, s.total_clicks));
+  const clicksUnique = num(pick(
     stats.unique_clicks_count, stats.unique_clicks, stats.clicks_unique,
     s.unique_clicks_count, s.unique_clicks, s.clicks_unique
   ));
-
-  // Fractions for new-spec consumers (0..1); percentages for the
-  // dashboard renderer (0..100). Both derived from unique opens/clicks
-  // since that's the metric that matches MailerLite's UI.
-  const openFraction  = sent > 0 ? opensUnique / sent : 0;
-  const clickFraction = sent > 0 ? clicksUnique / sent : 0;
 
   return {
     step_id: s.id != null ? String(s.id) : '',
     step_name: s.name || s.subject || '',
     subject: s.subject || s.name || '',
-    sent,
-    opens,
-    clicks,
-    // snake_case (new spec)
-    opens_unique: opensUnique,
-    clicks_unique: clicksUnique,
-    open_rate: round4(openFraction),
-    click_rate: round4(clickFraction),
-    // camelCase (existing dashboard renderer — keep intact to avoid
-    // a coordinated frontend change)
-    opensUnique,
-    clicksUnique,
-    openRate: +(openFraction * 100).toFixed(2),
-    clickRate: +(clickFraction * 100).toFixed(2),
-  };
-}
-
-function aggregateTotals(steps) {
-  let sent = 0, opens = 0, opensUnique = 0, clicks = 0, clicksUnique = 0;
-  for (const step of steps) {
-    if (!step) continue;
-    const f = formatStep(step);
-    sent          += f.sent;
-    opens         += f.opens;
-    opensUnique   += f.opens_unique;
-    clicks        += f.clicks;
-    clicksUnique  += f.clicks_unique;
-  }
-  return {
+    type: s.type || '',
     sent,
     opens,
     opens_unique: opensUnique,
     clicks,
     clicks_unique: clicksUnique,
+    open_rate: sent > 0 ? round4(opensUnique / sent) : 0,
+    click_rate: sent > 0 ? round4(clicksUnique / sent) : 0,
   };
 }
 

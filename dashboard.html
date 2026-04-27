@@ -13,13 +13,24 @@
     MAILERLITE_FREE_EBOOK_GROUP_ID   ID of "Free Ebook Downloads" group
     MAILERLITE_PAID_BUNDLE_GROUP_ID  ID of "Paid Bundle Buyers" group
   Optional (enables Layer 3c — Email engagement panel):
-    MAILERLITE_AUTOMATION_ID         Sleep Tight automation ID (parent
-                                     of all email steps). Required to
-                                     enable the email card at all.
-    MAILERLITE_EMAIL_1_STEP_ID       Step ID for "Email 1" within the
-                                     automation. Optional — when unset,
-                                     the per-email card stays empty.
-    MAILERLITE_EMAIL_3_STEP_ID       Step ID for "Email 3" — same.
+    Two automations, each independently configured:
+
+    Free funnel — 3-day welcome sequence (triggered on free signup):
+      MAILERLITE_WELCOME_AUTOMATION_ID
+      MAILERLITE_WELCOME_EMAIL_1_STEP_ID    (optional, welcome email)
+      MAILERLITE_WELCOME_EMAIL_3_STEP_ID    (optional, bundle pitch)
+
+    Paid funnel — 7-day post-purchase sequence (triggered on paid sale):
+      MAILERLITE_PURCHASE_AUTOMATION_ID
+      MAILERLITE_PURCHASE_EMAIL_1_STEP_ID   (optional)
+      MAILERLITE_PURCHASE_EMAIL_3_STEP_ID   (optional)
+
+    Each card renders independently — if welcome is configured but
+    purchase isn't (or vice versa), only the configured side shows
+    stats; the other shows "Not configured". When step IDs are
+    missing, the card shows automation-level totals plus the
+    available step IDs from MailerLite's response so you can pick
+    the right ones.
 
   Access: https://<your-domain>/dashboard
 -->
@@ -529,7 +540,7 @@
   <div class="section">
     <div class="section__head">
       <h2>Email engagement</h2>
-      <span class="eyebrow">all-time campaign stats</span>
+      <span class="eyebrow">automation stats · cached 5 min</span>
     </div>
     <div id="emailPanel"><div class="empty">Loading…</div></div>
   </div>
@@ -842,7 +853,9 @@
     state.meta = meta.status === 'fulfilled' ? meta.value : { error: meta.reason?.message || 'Meta data unavailable' };
     state.mailerlite = ml.status === 'fulfilled' ? ml.value : { error: ml.reason?.message || 'MailerLite data unavailable' };
     state.analytics = analytics.status === 'fulfilled' ? analytics.value : { error: analytics.reason?.message || 'Analytics unavailable' };
-    state.email = email.status === 'fulfilled' ? email.value : { available: false, reason: email.reason?.message || 'Email stats unavailable' };
+    state.email = email.status === 'fulfilled'
+      ? email.value
+      : { welcome: null, purchase: null, error: email.reason?.message || 'Email stats unavailable' };
     if (config.status === 'fulfilled' && config.value) state.config = config.value;
     state.campaigns = campaigns.status === 'fulfilled' && Array.isArray(campaigns.value?.campaigns)
       ? campaigns.value.campaigns
@@ -1416,47 +1429,161 @@
   }
 
   // ---------- Email panel ----------
+  // Renders two side-by-side cards (free funnel / paid funnel), one
+  // per MailerLite automation. Each card is independent — if welcome
+  // 200s and purchase 404s, the welcome card renders normally and
+  // the purchase card shows its scoped error. The two-column .email-grid
+  // collapses to one column under 720px (defined in the CSS block above)
+  // so the cards stack vertically on mobile.
+  //
+  // Card rendering rules:
+  //   - automation key is null              → "Not configured" empty state
+  //   - automation has an error             → scoped error message
+  //   - automation has 0 subscribers/sent   → "Waiting for first purchase"
+  //                                           style empty state, but with
+  //                                           the automation status visible
+  //                                           so we can confirm it's armed
+  //   - normal                              → totals strip + per-email rows
   function renderEmailPanel() {
     const wrap = document.getElementById('emailPanel');
     const e = state.email || {};
 
+    // Top-level error — fetch itself failed (e.g., bad token, 500).
+    // Both cards collapse into a single error so the dashboard isn't
+    // showing two duplicate "MailerLite token invalid" messages.
     if (e.error) {
       wrap.innerHTML = `<div class="error">${escapeHtml(e.error)}</div>`;
-      return;
-    }
-    if (!e.available) {
-      wrap.innerHTML = `<div class="panel"><div class="empty" style="padding:12px">Email stats not configured. ${escapeHtml(e.reason || '')}</div></div>`;
       return;
     }
 
     wrap.innerHTML = `
       <div class="email-grid">
-        ${emailCard('Email 1 — Welcome', e.email1)}
-        ${emailCard('Email 3 — Pitch', e.email3)}
+        ${automationCard({
+          slot: 'welcome',
+          eyebrow: 'Free funnel · 3-day welcome',
+          emptyEyebrow: 'Waiting for first signup',
+          data: e.welcome,
+        })}
+        ${automationCard({
+          slot: 'purchase',
+          eyebrow: 'Paid funnel · 7-day onboarding',
+          emptyEyebrow: 'Waiting for first purchase',
+          data: e.purchase,
+        })}
       </div>
     `;
   }
 
-  function emailCard(title, c) {
-    c = c || {};
+  function automationCard({ eyebrow, emptyEyebrow, data }) {
+    // 1. Not configured — env var unset.
+    if (!data) {
+      return `
+        <div class="panel">
+          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+          <div class="empty" style="padding:18px 0">Not configured</div>
+        </div>
+      `;
+    }
+
+    // 2. Scoped per-automation error.
+    if (data.error) {
+      return `
+        <div class="panel">
+          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+          <div class="error" style="margin-top:6px">${escapeHtml(data.error)}</div>
+        </div>
+      `;
+    }
+
+    const subs    = Number(data.subscribers_in_flow || 0);
+    const sent    = Number(data.total_sent || 0);
+    const openPct = (Number(data.overall_open_rate || 0) * 100).toFixed(0);
+    const clickPct= (Number(data.overall_click_rate || 0) * 100).toFixed(0);
+    const status  = data.status ? ` · ${escapeHtml(String(data.status))}` : '';
+    const name    = data.automation_name ? escapeHtml(data.automation_name) : '—';
+
+    // 3. Armed but empty (no sends yet). Surface status so we can see
+    // it's "active"/"paused"/"draft" and not silently broken.
+    if (sent === 0) {
+      return `
+        <div class="panel">
+          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+          <div class="email-panel__subject">${name}${status}</div>
+          <div class="email-panel__sent">${fmt.int(subs)} subscribers in flow</div>
+          <div class="empty" style="padding:18px 0">${escapeHtml(emptyEyebrow)}</div>
+          ${availableStepsBlock(data.available_steps, data.missing_steps)}
+        </div>
+      `;
+    }
+
+    // 4. Normal render — totals strip + per-email rows.
     return `
       <div class="panel">
-        <div class="panel__title">${escapeHtml(title)}</div>
-        <div class="email-panel__subject">${escapeHtml(c.subject || '—')}</div>
-        <div class="email-panel__sent">${fmt.int(c.sent || 0)} sent</div>
+        <div class="panel__title">${escapeHtml(eyebrow)}</div>
+        <div class="email-panel__subject">${name}${status}</div>
+        <div class="email-panel__sent">
+          ${fmt.int(subs)} in flow · ${fmt.int(sent)} sent
+        </div>
         <div class="stat-row">
           <span class="stat-row__label">Open rate</span>
-          <span class="stat-row__value">${fmt.pct(c.openRate || 0)}
-            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(c.opensUnique || 0)})</span>
+          <span class="stat-row__value">${openPct}%
+            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(data.total_opens_unique || 0)})</span>
           </span>
         </div>
         <div class="stat-row">
           <span class="stat-row__label">Click rate</span>
-          <span class="stat-row__value">${fmt.pct(c.clickRate || 0)}
-            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(c.clicksUnique || 0)})</span>
+          <span class="stat-row__value">${clickPct}%
+            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(data.total_clicks_unique || 0)})</span>
           </span>
         </div>
+        ${stepRow('Email 1', data.email_1)}
+        ${stepRow('Email 3', data.email_3)}
+        ${availableStepsBlock(data.available_steps, data.missing_steps)}
       </div>
+    `;
+  }
+
+  function stepRow(label, step) {
+    if (!step) return '';
+    if (step.missing) {
+      return `
+        <div class="stat-row">
+          <span class="stat-row__label">${escapeHtml(label)}</span>
+          <span class="stat-row__value" style="color:var(--red);font-weight:600;font-size:12px">
+            step ${escapeHtml(step.step_id || '?')} not found
+          </span>
+        </div>
+      `;
+    }
+    const open = ((step.open_rate || 0) * 100).toFixed(0);
+    const click = ((step.click_rate || 0) * 100).toFixed(0);
+    const name = step.step_name ? ` (${escapeHtml(step.step_name)})` : '';
+    return `
+      <div class="stat-row">
+        <span class="stat-row__label">${escapeHtml(label)}${name}</span>
+        <span class="stat-row__value">${fmt.int(step.sent || 0)} sent · ${open}% open · ${click}% click</span>
+      </div>
+    `;
+  }
+
+  // Surface the step-id list inline as a collapsed <details> so Leo
+  // can grab IDs without curling the API. Always rendered when steps
+  // exist — kept collapsed by default in the happy path so it doesn't
+  // clutter the card. Auto-expands when there's a misconfiguration
+  // to debug.
+  function availableStepsBlock(steps, missing) {
+    const list = Array.isArray(steps) ? steps.filter(s => s && s.id) : [];
+    if (!list.length) return '';
+    const hasMissing = Array.isArray(missing) && missing.length > 0;
+    const openAttr = hasMissing ? ' open' : '';
+    const items = list.map(s =>
+      `<li><code>${escapeHtml(s.id)}</code> — ${escapeHtml(s.name || s.type || 'unnamed')}</li>`
+    ).join('');
+    return `
+      <details${openAttr} style="margin-top:12px;font-size:12px;color:var(--text-muted)">
+        <summary style="cursor:pointer">Available step IDs (${list.length})</summary>
+        <ul style="margin:8px 0 0 18px;line-height:1.6">${items}</ul>
+      </details>
     `;
   }
 
