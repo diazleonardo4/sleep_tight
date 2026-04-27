@@ -13,24 +13,13 @@
     MAILERLITE_FREE_EBOOK_GROUP_ID   ID of "Free Ebook Downloads" group
     MAILERLITE_PAID_BUNDLE_GROUP_ID  ID of "Paid Bundle Buyers" group
   Optional (enables Layer 3c — Email engagement panel):
-    Two automations, each independently configured:
+    MAILERLITE_WELCOME_AUTOMATION_ID    3-day welcome sequence
+    MAILERLITE_PURCHASE_AUTOMATION_ID   7-day post-purchase sequence
 
-    Free funnel — 3-day welcome sequence (triggered on free signup):
-      MAILERLITE_WELCOME_AUTOMATION_ID
-      MAILERLITE_WELCOME_EMAIL_1_STEP_ID    (optional, welcome email)
-      MAILERLITE_WELCOME_EMAIL_3_STEP_ID    (optional, bundle pitch)
-
-    Paid funnel — 7-day post-purchase sequence (triggered on paid sale):
-      MAILERLITE_PURCHASE_AUTOMATION_ID
-      MAILERLITE_PURCHASE_EMAIL_1_STEP_ID   (optional)
-      MAILERLITE_PURCHASE_EMAIL_3_STEP_ID   (optional)
-
-    Each card renders independently — if welcome is configured but
-    purchase isn't (or vice versa), only the configured side shows
-    stats; the other shows "Not configured". When step IDs are
-    missing, the card shows automation-level totals plus the
-    available step IDs from MailerLite's response so you can pick
-    the right ones.
+    All email steps inside each automation are auto-discovered from
+    MailerLite's response — adding/removing emails in MailerLite is
+    reflected on the next dashboard refresh, no env-var or code
+    changes required.
 
   Access: https://<your-domain>/dashboard
 -->
@@ -1432,25 +1421,30 @@
   // Renders two side-by-side cards (free funnel / paid funnel), one
   // per MailerLite automation. Each card is independent — if welcome
   // 200s and purchase 404s, the welcome card renders normally and
-  // the purchase card shows its scoped error. The two-column .email-grid
-  // collapses to one column under 720px (defined in the CSS block above)
-  // so the cards stack vertically on mobile.
+  // the purchase card shows its scoped error. The two-column
+  // .email-grid collapses to one column under 720px (defined in the
+  // CSS above), so the cards stack vertically on mobile.
+  //
+  // Inside each card we render every email step in data.emails as a
+  // numbered row (Email 1, Email 2, ...). The list length is dynamic:
+  // 3 emails for the welcome sequence, up to 7 for post-purchase. The
+  // backend auto-discovers email steps from MailerLite's automation
+  // response, so adding/removing emails in MailerLite is reflected on
+  // the next dashboard refresh — no code or env-var changes.
   //
   // Card rendering rules:
-  //   - automation key is null              → "Not configured" empty state
+  //   - automation key is null              → "Not configured"
   //   - automation has an error             → scoped error message
-  //   - automation has 0 subscribers/sent   → "Waiting for first purchase"
-  //                                           style empty state, but with
-  //                                           the automation status visible
-  //                                           so we can confirm it's armed
-  //   - normal                              → totals strip + per-email rows
+  //   - emails array is empty               → "No email steps in this
+  //                                            automation" (edge case)
+  //   - normal                              → header strip + email rows
   function renderEmailPanel() {
     const wrap = document.getElementById('emailPanel');
     const e = state.email || {};
 
-    // Top-level error — fetch itself failed (e.g., bad token, 500).
-    // Both cards collapse into a single error so the dashboard isn't
-    // showing two duplicate "MailerLite token invalid" messages.
+    // Top-level error — fetch itself failed (e.g., network, top-level
+    // 5xx). Both cards collapse into a single error so we don't show
+    // duplicate "MailerLite token invalid" messages side-by-side.
     if (e.error) {
       wrap.innerHTML = `<div class="error">${escapeHtml(e.error)}</div>`;
       return;
@@ -1458,23 +1452,13 @@
 
     wrap.innerHTML = `
       <div class="email-grid">
-        ${automationCard({
-          slot: 'welcome',
-          eyebrow: 'Free funnel · 3-day welcome',
-          emptyEyebrow: 'Waiting for first signup',
-          data: e.welcome,
-        })}
-        ${automationCard({
-          slot: 'purchase',
-          eyebrow: 'Paid funnel · 7-day onboarding',
-          emptyEyebrow: 'Waiting for first purchase',
-          data: e.purchase,
-        })}
+        ${automationCard({ eyebrow: 'Free funnel · 3-day welcome',     data: e.welcome  })}
+        ${automationCard({ eyebrow: 'Paid funnel · 7-day onboarding',  data: e.purchase })}
       </div>
     `;
   }
 
-  function automationCard({ eyebrow, emptyEyebrow, data }) {
+  function automationCard({ eyebrow, data }) {
     // 1. Not configured — env var unset.
     if (!data) {
       return `
@@ -1495,95 +1479,94 @@
       `;
     }
 
-    const subs    = Number(data.subscribers_in_flow || 0);
-    const sent    = Number(data.total_sent || 0);
-    const openPct = (Number(data.overall_open_rate || 0) * 100).toFixed(0);
-    const clickPct= (Number(data.overall_click_rate || 0) * 100).toFixed(0);
-    const status  = data.status ? ` · ${escapeHtml(String(data.status))}` : '';
-    const name    = data.automation_name ? escapeHtml(data.automation_name) : '—';
+    const overall = data.overall || {};
+    const sent = Number(overall.sent || 0);
+    const received = Number(data.total_received || 0);
+    const inFlow = Number(data.in_flow || 0);
+    const status = data.status ? ` · ${escapeHtml(String(data.status))}` : '';
+    const name = data.automation_name ? escapeHtml(data.automation_name) : '—';
+    const emails = Array.isArray(data.emails) ? data.emails : [];
 
-    // 3. Armed but empty (no sends yet). Surface status so we can see
-    // it's "active"/"paused"/"draft" and not silently broken.
-    if (sent === 0) {
+    // Header line: "X received · Y in flow · Z sent" — drop any field
+    // that's zero so the line stays tidy when MailerLite hasn't started
+    // populating an automation yet (very common for the post-purchase
+    // sequence pre-first-sale).
+    const headerBits = [];
+    if (received > 0) headerBits.push(`${fmt.int(received)} received`);
+    if (inFlow > 0)   headerBits.push(`${fmt.int(inFlow)} in flow`);
+    if (sent > 0)     headerBits.push(`${fmt.int(sent)} sent`);
+    const headerLine = headerBits.length
+      ? headerBits.join(' · ')
+      : 'No sends yet';
+
+    // Aggregate open/click row only renders when there's actual send
+    // volume. Showing "0% open" against zero sends is meaningless and
+    // makes the post-purchase card look broken before its first sale.
+    const aggregateRows = sent > 0 ? `
+      <div class="stat-row">
+        <span class="stat-row__label">Overall open rate</span>
+        <span class="stat-row__value">${(Number(overall.open_rate || 0) * 100).toFixed(0)}%
+          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.opens_unique || 0)})</span>
+        </span>
+      </div>
+      <div class="stat-row">
+        <span class="stat-row__label">Overall click rate</span>
+        <span class="stat-row__value">${(Number(overall.click_rate || 0) * 100).toFixed(0)}%
+          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.clicks_unique || 0)})</span>
+        </span>
+      </div>
+    ` : '';
+
+    // No email steps found in the automation — edge case where the
+    // flow only contains delays/conditions (or the type-sniffing
+    // dropped everything). Surface clearly instead of rendering a
+    // silent empty list.
+    if (!emails.length) {
       return `
         <div class="panel">
           <div class="panel__title">${escapeHtml(eyebrow)}</div>
           <div class="email-panel__subject">${name}${status}</div>
-          <div class="email-panel__sent">${fmt.int(subs)} subscribers in flow</div>
-          <div class="empty" style="padding:18px 0">${escapeHtml(emptyEyebrow)}</div>
-          ${availableStepsBlock(data.available_steps, data.missing_steps)}
+          <div class="email-panel__sent">${escapeHtml(headerLine)}</div>
+          <div class="empty" style="padding:18px 0">No email steps in this automation</div>
         </div>
       `;
     }
 
-    // 4. Normal render — totals strip + per-email rows.
     return `
       <div class="panel">
         <div class="panel__title">${escapeHtml(eyebrow)}</div>
         <div class="email-panel__subject">${name}${status}</div>
-        <div class="email-panel__sent">
-          ${fmt.int(subs)} in flow · ${fmt.int(sent)} sent
-        </div>
-        <div class="stat-row">
-          <span class="stat-row__label">Open rate</span>
-          <span class="stat-row__value">${openPct}%
-            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(data.total_opens_unique || 0)})</span>
-          </span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-row__label">Click rate</span>
-          <span class="stat-row__value">${clickPct}%
-            <span style="color:var(--text-muted);font-weight:400">(${fmt.int(data.total_clicks_unique || 0)})</span>
-          </span>
-        </div>
-        ${stepRow('Email 1', data.email_1)}
-        ${stepRow('Email 3', data.email_3)}
-        ${availableStepsBlock(data.available_steps, data.missing_steps)}
+        <div class="email-panel__sent">${escapeHtml(headerLine)}</div>
+        ${aggregateRows}
+        ${emails.map(emailRow).join('')}
       </div>
     `;
   }
 
-  function stepRow(label, step) {
-    if (!step) return '';
-    if (step.missing) {
+  // Renders one email step row. Steps with zero sends show "Awaiting
+  // first sends" — that's the post-purchase pre-first-sale state, but
+  // it's also the right call for any newly-added email step that
+  // hasn't fired yet.
+  function emailRow(e) {
+    const sent = Number(e.sent || 0);
+    const namePart = e.step_name ? ` — ${escapeHtml(e.step_name)}` : '';
+    if (sent === 0) {
       return `
         <div class="stat-row">
-          <span class="stat-row__label">${escapeHtml(label)}</span>
-          <span class="stat-row__value" style="color:var(--red);font-weight:600;font-size:12px">
-            step ${escapeHtml(step.step_id || '?')} not found
+          <span class="stat-row__label">Email ${e.position}${namePart}</span>
+          <span class="stat-row__value" style="color:var(--text-faint);font-weight:500;font-size:12px">
+            Awaiting first sends
           </span>
         </div>
       `;
     }
-    const open = ((step.open_rate || 0) * 100).toFixed(0);
-    const click = ((step.click_rate || 0) * 100).toFixed(0);
-    const name = step.step_name ? ` (${escapeHtml(step.step_name)})` : '';
+    const open = (Number(e.open_rate || 0) * 100).toFixed(0);
+    const click = (Number(e.click_rate || 0) * 100).toFixed(0);
     return `
       <div class="stat-row">
-        <span class="stat-row__label">${escapeHtml(label)}${name}</span>
-        <span class="stat-row__value">${fmt.int(step.sent || 0)} sent · ${open}% open · ${click}% click</span>
+        <span class="stat-row__label">Email ${e.position}${namePart}</span>
+        <span class="stat-row__value">${fmt.int(sent)} sent · ${open}% open · ${click}% click</span>
       </div>
-    `;
-  }
-
-  // Surface the step-id list inline as a collapsed <details> so Leo
-  // can grab IDs without curling the API. Always rendered when steps
-  // exist — kept collapsed by default in the happy path so it doesn't
-  // clutter the card. Auto-expands when there's a misconfiguration
-  // to debug.
-  function availableStepsBlock(steps, missing) {
-    const list = Array.isArray(steps) ? steps.filter(s => s && s.id) : [];
-    if (!list.length) return '';
-    const hasMissing = Array.isArray(missing) && missing.length > 0;
-    const openAttr = hasMissing ? ' open' : '';
-    const items = list.map(s =>
-      `<li><code>${escapeHtml(s.id)}</code> — ${escapeHtml(s.name || s.type || 'unnamed')}</li>`
-    ).join('');
-    return `
-      <details${openAttr} style="margin-top:12px;font-size:12px;color:var(--text-muted)">
-        <summary style="cursor:pointer">Available step IDs (${list.length})</summary>
-        <ul style="margin:8px 0 0 18px;line-height:1.6">${items}</ul>
-      </details>
     `;
   }
 
