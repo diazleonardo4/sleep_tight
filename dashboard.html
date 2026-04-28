@@ -1481,20 +1481,20 @@
 
     const overall = data.overall || {};
     const sent = Number(overall.sent || 0);
-    const received = Number(data.total_received || 0);
+    const completed = Number(data.completed || 0);
     const inFlow = Number(data.in_flow || 0);
     const status = data.status ? ` · ${escapeHtml(String(data.status))}` : '';
     const name = data.automation_name ? escapeHtml(data.automation_name) : '—';
     const emails = Array.isArray(data.emails) ? data.emails : [];
 
-    // Header line: "X received · Y in flow · Z sent" — drop any field
+    // Header line: "X completed · Y in flow · Z sent" — drop any field
     // that's zero so the line stays tidy when MailerLite hasn't started
     // populating an automation yet (very common for the post-purchase
     // sequence pre-first-sale).
     const headerBits = [];
-    if (received > 0) headerBits.push(`${fmt.int(received)} received`);
-    if (inFlow > 0)   headerBits.push(`${fmt.int(inFlow)} in flow`);
-    if (sent > 0)     headerBits.push(`${fmt.int(sent)} sent`);
+    if (completed > 0) headerBits.push(`${fmt.int(completed)} completed`);
+    if (inFlow > 0)    headerBits.push(`${fmt.int(inFlow)} in flow`);
+    if (sent > 0)      headerBits.push(`${fmt.int(sent)} sent`);
     const headerLine = headerBits.length
       ? headerBits.join(' · ')
       : 'No sends yet';
@@ -1502,17 +1502,19 @@
     // Aggregate open/click row only renders when there's actual send
     // volume. Showing "0% open" against zero sends is meaningless and
     // makes the post-purchase card look broken before its first sale.
+    // MailerLite gives us pre-aggregated rates in data.overall — no
+    // need to derive from per-email rows.
     const aggregateRows = sent > 0 ? `
       <div class="stat-row">
         <span class="stat-row__label">Overall open rate</span>
         <span class="stat-row__value">${(Number(overall.open_rate || 0) * 100).toFixed(0)}%
-          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.opens_unique || 0)})</span>
+          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.opens || 0)})</span>
         </span>
       </div>
       <div class="stat-row">
         <span class="stat-row__label">Overall click rate</span>
         <span class="stat-row__value">${(Number(overall.click_rate || 0) * 100).toFixed(0)}%
-          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.clicks_unique || 0)})</span>
+          <span style="color:var(--text-muted);font-weight:400">(${fmt.int(overall.clicks || 0)})</span>
         </span>
       </div>
     ` : '';
@@ -1543,17 +1545,21 @@
     `;
   }
 
-  // Renders one email step row. Steps with zero sends show "Awaiting
-  // first sends" — that's the post-purchase pre-first-sale state, but
-  // it's also the right call for any newly-added email step that
-  // hasn't fired yet.
+  // Renders one email step row. Lead with the subject line — it's
+  // far more informative than "Email 1 — Email 1" (MailerLite's step
+  // names already are "Email 1", "Email 2", which collided with our
+  // own positional numbering). Falls back to step_name, then a generic
+  // "Email N" if neither is present.
+  // Steps with zero sends show "Awaiting first sends" — that's the
+  // post-purchase pre-first-sale state, but it's also the right call
+  // for any newly-added email step that hasn't fired yet.
   function emailRow(e) {
     const sent = Number(e.sent || 0);
-    const namePart = e.step_name ? ` — ${escapeHtml(e.step_name)}` : '';
+    const label = e.subject || e.step_name || `Email ${e.position}`;
     if (sent === 0) {
       return `
         <div class="stat-row">
-          <span class="stat-row__label">Email ${e.position}${namePart}</span>
+          <span class="stat-row__label">${escapeHtml(label)}</span>
           <span class="stat-row__value" style="color:var(--text-faint);font-weight:500;font-size:12px">
             Awaiting first sends
           </span>
@@ -1564,7 +1570,7 @@
     const click = (Number(e.click_rate || 0) * 100).toFixed(0);
     return `
       <div class="stat-row">
-        <span class="stat-row__label">Email ${e.position}${namePart}</span>
+        <span class="stat-row__label">${escapeHtml(label)}</span>
         <span class="stat-row__value">${fmt.int(sent)} sent · ${open}% open · ${click}% click</span>
       </div>
     `;

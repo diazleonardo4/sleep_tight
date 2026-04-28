@@ -31,20 +31,23 @@
 //   { error, automation_id }                                fetch failed
 //   {
 //     automation_id, automation_name, status,
-//     total_received,                  // subscribers who entered the flow
+//     completed,                       // subscribers who finished the flow
 //     in_flow,                         // currently mid-sequence
-//     overall: { sent, opens, clicks, opens_unique, clicks_unique,
-//                open_rate, click_rate },
+//     overall: { sent, opens, clicks, open_rate, click_rate,
+//                unsubscribes, bounce_rate },
 //     emails: [
-//       { position, step_id, step_name, sent, opens, clicks,
-//         unique_opens, unique_clicks, open_rate, click_rate },
+//       { position, step_id, step_name, subject,
+//         sent, opens, clicks, unsubscribes, open_rate, click_rate },
 //       ...
 //     ],
 //   }
 //
 // `position` is the EMAIL position (1, 2, 3, ...) regardless of how
 // many delay/condition steps sit between emails in the raw flow.
-// MailerLite returns steps in flow order, which we preserve.
+// MailerLite returns steps in *creation* order, not flow order, so we
+// reconstruct flow order by walking the parent_id linked list before
+// numbering. `overall` and `completed`/`in_flow` come from the
+// top-level data.stats block — MailerLite pre-aggregates them for us.
 //
 // 5-min memo cache so dashboard refreshes don't hammer MailerLite.
 
@@ -147,138 +150,91 @@ function shapeAutomation(automation, config) {
   const a = automation || {};
   const rawSteps = Array.isArray(a.steps) ? a.steps : [];
 
-  // Auto-discover email steps. Preserve MailerLite's flow order so
-  // Email N matches the order subscribers actually receive them.
-  const emailSteps = rawSteps.filter(isEmailStep);
-
+  // MailerLite returns steps in *creation* order, not flow order.
+  // Walk the parent_id linked list from root so Email 1 = the actual
+  // first email subscribers receive, regardless of when it was
+  // authored. Then filter to email-type steps that have an `email`
+  // payload — delays/conditions don't.
+  const ordered = sortStepsByFlow(rawSteps);
+  const emailSteps = ordered.filter(
+    s => String(s.type || '').toLowerCase() === 'email' && s.email
+  );
   const emails = emailSteps.map((step, i) => formatEmail(step, i + 1));
 
-  const overall = aggregateOverall(emails);
+  // Top-level automation aggregate. MailerLite already does the
+  // sums for us — no need to re-aggregate from per-email rows.
+  const stats = a.stats || {};
+  const overall = {
+    sent:         num(stats.sent),
+    opens:        num(stats.opens_count),
+    clicks:       num(stats.clicks_count),
+    open_rate:    numFloat(stats.open_rate),
+    click_rate:   numFloat(stats.click_rate),
+    unsubscribes: num(stats.unsubscribes_count),
+    bounce_rate:  numFloat(stats.bounce_rate),
+  };
 
   return {
     automation_id: a.id || config.automationId,
     automation_name: a.name || a.title || '',
     status: a.status || '',
-    total_received: extractCount(a, 'received'),
-    in_flow: extractCount(a, 'in_flow'),
+    completed: num(stats.completed_subscribers_count),
+    in_flow:   num(stats.subscribers_in_queue_count),
     overall,
     emails,
   };
 }
 
-// MailerLite step types include `email`, `delay`/`wait`, `condition`,
-// `action`/`tag`, `goal`, etc. Prefer the explicit `type === 'email'`
-// match. When type is missing/unknown, fall back to sniffing for
-// email-shaped content (a subject, or any of the sent/opens/clicks
-// counters present at any nesting depth) — the spec's documented
-// fallback for accounts where the type field is unreliable.
-function isEmailStep(step) {
-  if (!step) return false;
-  const type = String(step.type || '').toLowerCase();
-  if (type === 'email') return true;
-  if (type) return false; // explicit non-email type — skip
-
-  if (step.subject) return true;
-  return hasAnyStatField(step) || hasAnyStatField(step.stats) || hasAnyStatField(step.statistics);
-}
-
-const STAT_FIELDS = [
-  'sent', 'sent_count', 'total_sent',
-  'opens', 'opens_count', 'unique_opens', 'unique_opens_count',
-  'clicks', 'clicks_count', 'unique_clicks', 'unique_clicks_count',
-];
-function hasAnyStatField(obj) {
-  if (!obj || typeof obj !== 'object') return false;
-  for (const f of STAT_FIELDS) if (obj[f] !== undefined && obj[f] !== null) return true;
-  return false;
+// Walk the parent_id linked list. Root step has parent_id null/undefined.
+// Each subsequent step's parent_id points at the previous step's id.
+// Defensive: if the chain is broken (orphan or cycle) we stop walking
+// instead of looping forever, and any unreachable steps are dropped —
+// they're not part of the live flow anyway.
+function sortStepsByFlow(steps) {
+  if (!Array.isArray(steps) || steps.length === 0) return [];
+  const byParent = new Map();
+  for (const s of steps) {
+    if (!s || s.id == null) continue;
+    const key = s.parent_id == null ? 'ROOT' : String(s.parent_id);
+    // First-write-wins so a malformed payload with duplicate parents
+    // doesn't silently swap the order on us.
+    if (!byParent.has(key)) byParent.set(key, s);
+  }
+  const ordered = [];
+  const seen = new Set();
+  let current = byParent.get('ROOT');
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    ordered.push(current);
+    current = byParent.get(String(current.id));
+  }
+  return ordered;
 }
 
 function formatEmail(step, position) {
   const s = step || {};
-  const stats = s.stats || s.statistics || {};
+  const email = s.email || {};
+  const stats = email.stats || {};
 
-  const sent = num(pick(stats.sent, stats.sent_count, s.sent, s.sent_count, s.total_sent));
-  const opens = num(pick(stats.opens_count, stats.opens, s.opens_count, s.opens, s.total_opens));
-  const opensUnique = num(pick(
-    stats.unique_opens_count, stats.unique_opens, stats.opens_unique,
-    s.unique_opens_count, s.unique_opens, s.opens_unique
-  ));
-  const clicks = num(pick(stats.clicks_count, stats.clicks, s.clicks_count, s.clicks, s.total_clicks));
-  const clicksUnique = num(pick(
-    stats.unique_clicks_count, stats.unique_clicks, stats.clicks_unique,
-    s.unique_clicks_count, s.unique_clicks, s.clicks_unique
-  ));
+  const sent         = num(stats.sent);
+  const opens        = num(stats.opens_count);
+  const clicks       = num(stats.clicks_count);
+  const unsubscribes = num(stats.unsubscribes_count);
+  const openRate     = numFloat(stats.open_rate);
+  const clickRate    = numFloat(stats.click_rate);
 
   return {
     position,
     step_id: s.id != null ? String(s.id) : '',
-    step_name: s.name || s.subject || '',
-    subject: s.subject || '',
+    step_name: s.name || '',
+    subject: s.subject || email.subject || '',
     sent,
     opens,
     clicks,
-    unique_opens: opensUnique,
-    unique_clicks: clicksUnique,
-    open_rate: sent > 0 ? round4(opensUnique / sent) : 0,
-    click_rate: sent > 0 ? round4(clicksUnique / sent) : 0,
+    unsubscribes,
+    open_rate: openRate,
+    click_rate: clickRate,
   };
-}
-
-function aggregateOverall(emails) {
-  let sent = 0, opens = 0, clicks = 0, opensUnique = 0, clicksUnique = 0;
-  for (const e of emails) {
-    sent += e.sent;
-    opens += e.opens;
-    clicks += e.clicks;
-    opensUnique += e.unique_opens;
-    clicksUnique += e.unique_clicks;
-  }
-  return {
-    sent,
-    opens,
-    clicks,
-    opens_unique: opensUnique,
-    clicks_unique: clicksUnique,
-    open_rate: sent > 0 ? round4(opensUnique / sent) : 0,
-    click_rate: sent > 0 ? round4(clicksUnique / sent) : 0,
-  };
-}
-
-// MailerLite's automation payload exposes the "subscribers received"
-// and "currently in flow" counts under various field names depending
-// on account vintage. Probe several known shapes; fall back to 0 so
-// missing data renders cleanly instead of NaN.
-function extractCount(a, kind) {
-  const stats = a.stats || a.statistics || {};
-  if (kind === 'received') {
-    return num(pick(
-      a.subscribers_count,
-      a.total_subscribers_count,
-      a.recipients_count,
-      a.total_audience,
-      stats.subscribers_count,
-      stats.total_subscribers_count,
-      stats.recipients_count,
-      stats.unique_recipients
-    ));
-  }
-  // kind === 'in_flow' — currently mid-sequence
-  return num(pick(
-    a.active_subscribers_count,
-    a.subscribers_in_flow,
-    a.current_subscribers_count,
-    a.in_flow,
-    stats.active_subscribers_count,
-    stats.subscribers_in_flow,
-    stats.in_flow
-  ));
-}
-
-function pick(...vals) {
-  for (const v of vals) {
-    if (v !== undefined && v !== null && v !== '') return v;
-  }
-  return 0;
 }
 
 function num(v) {
@@ -286,8 +242,17 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function round4(n) {
-  return Number.isFinite(n) ? +n.toFixed(4) : 0;
+// MailerLite wraps rate fields as { float: 0.4848, string: "48.48%" }.
+// Some endpoints/vintages return a bare number instead, so handle both.
+function numFloat(v) {
+  if (v == null) return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'object' && v.float != null) {
+    const n = Number(v.float);
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function checkAuth(req, res) {
