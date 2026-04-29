@@ -5,22 +5,23 @@
 // Timezone handling:
 //   1. The "today / 7d / 30d" window is computed in DASHBOARD_TIMEZONE
 //      (see api/_utils/dates.js) and turned into real epoch-ms boundaries.
-//   2. Those boundaries are translated into YYYY-MM-DD strings in the
-//      Meta ad account's own TZ (META_AD_ACCOUNT_TIMEZONE — see
-//      api/_utils/meta-tz.js) and that's what gets sent to Meta's
-//      Insights API, because Meta interprets time_range in the ad
-//      account TZ's wall clock, not dashboard TZ.
-//   3. Because Meta's time_range is day-granularity, the returned
-//      numbers cover slightly more than the exact dashboard window at
-//      the edges (a couple hours of overlap into Meta's previous or
-//      next day). This is an accepted trade-off for Meta's API
-//      limitation — precise sub-day alignment would require pulling
-//      time_increment=1 hourly rows and filtering in code.
+//   2. Those epoch-ms boundaries are formatted as ISO 8601 datetimes
+//      with explicit UTC offset (e.g. "2026-04-28T05:00:00+0000") and
+//      sent to Meta as `time_range.since` / `time_range.until`. Meta
+//      accepts ISO datetimes and queries the exact window — so the
+//      result is exactly N×24h aligned to dashboard-TZ midnight,
+//      regardless of how dashboard TZ relates to the ad account TZ.
+//   3. We do NOT send YYYY-MM-DD date-only strings here. Meta would
+//      expand those to full ad-account-TZ days, which (when dashboard
+//      TZ ≠ ad account TZ) stretches the window past 24h on both
+//      ends — e.g. a Bogotá "today" rendered as LA dates 2026-04-27
+//      and 2026-04-28 turns into 48h of LA-day data instead of the
+//      intended 24h Bogotá-day window. See api/_utils/meta-tz.js.
 //
 // Response shape:
 // {
 //   range:          "today" | "7d" | "30d",
-//   timeRange:      { since, until },   // as sent to Meta — dates in META_AD_ACCOUNT_TIMEZONE
+//   timeRange:      { since, until },   // as sent to Meta — ISO 8601 UTC datetimes (e.g. "2026-04-28T05:00:00+0000")
 //   dashboardRange: { since, until },   // original dashboard-TZ window (what the UI shows)
 //   summary:        { spend, impressions, clicks, reach, ctr, cpc, cpm },
 //   byAd:           [ { name, spend, impressions, clicks, ctr, cpc } ],
@@ -36,7 +37,7 @@
 // currency — the dashboard handles display-side conversion.
 
 const { getDateRange, normalizeRange, getDashboardDayBoundaries } = require('./_utils/dates');
-const { utcToMetaDate } = require('./_utils/meta-tz');
+const { epochToMetaISO } = require('./_utils/meta-tz');
 const {
   normalizeCampaignName,
   DIRECT_CAMPAIGN_SENTINEL,
@@ -106,16 +107,19 @@ module.exports = async (req, res) => {
     }
   }
 
-  // Translate dashboard-TZ window → epoch boundaries → Meta-TZ dates.
-  // This is the one place in the codebase where Meta's timezone matters.
-  // Using endMs - 1 on `until` keeps the final moment inside the window
-  // rather than crossing into the next day.
+  // Translate dashboard-TZ window → epoch boundaries → ISO datetimes.
+  // We send precise UTC datetimes (not YYYY-MM-DD) so Meta queries the
+  // exact 24h-multiple window aligned to dashboard-TZ midnight, instead
+  // of expanding date-only values out to ad-account-TZ day edges (which
+  // stretches a 24h window into ~48h when the timezones differ).
+  // `endMs - 1000` lands the upper bound on HH:59:59 of the last day
+  // — the boundary stays inside the window without sub-second noise.
   const dashboardRange = getDateRange(range);
   const { startMs } = getDashboardDayBoundaries(dashboardRange.since);
   const { endMs } = getDashboardDayBoundaries(dashboardRange.until);
   const timeRange = {
-    since: utcToMetaDate(startMs),
-    until: utcToMetaDate(endMs - 1),
+    since: epochToMetaISO(startMs),
+    until: epochToMetaISO(endMs - 1000),
   };
   const timeRangeParam = `time_range=${encodeURIComponent(JSON.stringify(timeRange))}`;
 
