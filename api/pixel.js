@@ -43,18 +43,48 @@ module.exports = (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
 
   const pixelId = process.env.META_PIXEL_ID;
-  const bundleUrlBase = process.env.BUNDLE_URL_BASE || '';
+  const bundleUrlBaseRaw = (process.env.BUNDLE_URL_BASE || '').trim();
 
-  // Public-config envelope. Always emitted (even when both env
-  // vars are unset) so consumers can `window.__SLEEP_TIGHT_PUBLIC_CONFIG__?.bundleUrl`
-  // safely. JSON.stringify on the URL handles any embedded quotes
-  // / newlines defensively, even though we only ever expect a
-  // plain HTTPS URL here.
+  // Validate the bundle URL before letting it reach the static
+  // thank-you page. The render script there constructs `new URL(...)`
+  // from this value, which throws on anything missing the protocol
+  // (e.g. "gumroad.com/l/foo" instead of "https://gumroad.com/l/foo").
+  // A throw inside the synchronous render kills #content, leaving a
+  // blank page -- exactly the symptom we just diagnosed.
+  //
+  // If the env value doesn't parse as an absolute http(s) URL, emit
+  // null. The thank-you page then falls back to its hardcoded
+  // placeholder, which 404s on click but at least keeps the page
+  // visible. Also append a console.warn into the response body so
+  // DevTools surfaces the misconfiguration loudly the next time this
+  // happens, instead of silently degrading.
+  let bundleUrlBase = '';
+  let bundleUrlWarning = '';
+  if (bundleUrlBaseRaw) {
+    let parsed;
+    try { parsed = new URL(bundleUrlBaseRaw); } catch (_) {}
+    if (parsed && (parsed.protocol === 'https:' || parsed.protocol === 'http:')) {
+      bundleUrlBase = bundleUrlBaseRaw;
+    } else {
+      bundleUrlWarning =
+        'BUNDLE_URL_BASE env var is not a valid absolute http(s) URL ' +
+        '(got: ' + JSON.stringify(bundleUrlBaseRaw) + '). ' +
+        'Falling back to placeholder URL on the thank-you page.';
+    }
+  }
+
+  // Public-config envelope. Always emitted (even when env vars are
+  // unset) so consumers can `window.__SLEEP_TIGHT_PUBLIC_CONFIG__?.bundleUrl`
+  // safely. JSON.stringify handles embedded quotes / newlines
+  // defensively, even though we only ever expect a plain HTTPS URL.
   const configBlock =
     `window.__SLEEP_TIGHT_PUBLIC_CONFIG__ = window.__SLEEP_TIGHT_PUBLIC_CONFIG__ || {};\n` +
     `window.__SLEEP_TIGHT_PUBLIC_CONFIG__.bundleUrl = ${
       bundleUrlBase ? JSON.stringify(bundleUrlBase) : 'null'
-    };\n`;
+    };\n` +
+    (bundleUrlWarning
+      ? `try{(window.console||{}).warn&&console.warn(${JSON.stringify('[Sleep Tight config] ' + bundleUrlWarning)});}catch(_){}\n`
+      : '');
 
   if (!pixelId || !/^\d+$/.test(pixelId)) {
     // Pixel disabled — still emit the public-config envelope so

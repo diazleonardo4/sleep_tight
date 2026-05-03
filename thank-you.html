@@ -326,13 +326,31 @@
   // Build the Gumroad URL with feedback-attribution UTMs so the
   // dashboard's byCampaign / byUtmContent can split bundle revenue
   // by which feedback answer drove it.
+  //
+  // Defensive: `new URL()` throws on non-absolute inputs (e.g. an
+  // env value missing the https:// prefix). Because softBundleLink
+  // and ctaButton are called eagerly during VARIANTS object init,
+  // a throw here would crash the whole script and leave #content
+  // blank. We catch, log, and return the raw value -- the CTA may
+  // resolve incorrectly, but the page still renders.
   function bundleUrl(utmContent) {
-    var u = new URL(BUNDLE_URL_BASE);
-    u.searchParams.set('utm_source', 'feedback');
-    u.searchParams.set('utm_medium', 'email');
-    u.searchParams.set('utm_campaign', 'feedback_thankyou');
-    if (utmContent) u.searchParams.set('utm_content', utmContent);
-    return u.toString();
+    try {
+      var u = new URL(BUNDLE_URL_BASE);
+      u.searchParams.set('utm_source', 'feedback');
+      u.searchParams.set('utm_medium', 'email');
+      u.searchParams.set('utm_campaign', 'feedback_thankyou');
+      if (utmContent) u.searchParams.set('utm_content', utmContent);
+      return u.toString();
+    } catch (e) {
+      try {
+        if (window.console) console.warn(
+          '[thank-you] Could not build bundle URL from base; ' +
+          'check BUNDLE_URL_BASE env var (must include https://).',
+          { base: BUNDLE_URL_BASE, error: e && e.message }
+        );
+      } catch (_) {}
+      return BUNDLE_URL_BASE || '#';
+    }
   }
 
   function escapeHtml(s) {
@@ -462,16 +480,43 @@
     return DEFAULT_VARIANT;
   }
 
-  var variant = pickVariant();
-  document.getElementById('content').innerHTML = variant.body;
+  // Render with a hard fallback. If anything in the variant
+  // resolution / VARIANTS construction throws (most likely cause:
+  // a malformed BUNDLE_URL_BASE in env that broke `new URL()` --
+  // bundleUrl() now catches that, but other unforeseen errors
+  // could still surface here), we still want #content populated
+  // so the page isn't blank. The fallback is the same content as
+  // DEFAULT_VARIANT but inlined as a literal string so it can't
+  // be reached by any error in the variant table.
+  var variant;
+  try {
+    variant = pickVariant();
+    document.getElementById('content').innerHTML = variant.body;
+  } catch (e) {
+    try {
+      if (window.console) console.error('[thank-you] render failed; using fallback:', e);
+    } catch (_) {}
+    variant = { pitches: false, utmContent: 'fallback' };
+    document.getElementById('content').innerHTML =
+      '<div class="body">' +
+        '<p>Your response helps us make the guide better.</p>' +
+      '</div>' +
+      '<div class="followup">' +
+        '<p class="followup__label">Haven&rsquo;t opened the guide yet?</p>' +
+        '<a class="download" href="/api/download-pdf" rel="noopener">' +
+          'Download Sleep Tight ' +
+          '<span class="download__arrow" aria-hidden="true">&rarr;</span>' +
+        '</a>' +
+      '</div>';
+  }
 
   // Pixel ViewContent fires on the pitched variants only. The
   // sleeping_better page is a positive feedback acknowledgement and
   // (per spec) shouldn't pollute the bundle audience optimization.
-  // /api/pixel.js is async — it might not have evaluated by the time
-  // we hit this line. fbq is a queue once the snippet runs, so as
-  // long as we feature-detect at fire time we're safe; we wrap the
-  // call in a small retry loop in case the script is still in flight.
+  // /api/pixel.js loads synchronously on this page so fbq is
+  // already on the queue by the time we hit this line, but we
+  // keep the small retry loop as defense in case the loader 404s
+  // and a downstream script ever flips fbq into existence late.
   function tryPixelViewContent(retriesLeft) {
     if (typeof fbq === 'function') {
       fbq('track', 'ViewContent', {
