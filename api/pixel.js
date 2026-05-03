@@ -60,14 +60,51 @@ module.exports = (req, res) => {
   // visible. Also append a console.warn into the response body so
   // DevTools surfaces the misconfiguration loudly the next time this
   // happens, instead of silently degrading.
+  // Validate (and lightly normalize) the bundle URL. Three accepted
+  // shapes, in priority order:
+  //   1. https://host/...  -> use as-is
+  //   2. http://host/...   -> use as-is (rare, but technically valid)
+  //   3. host/...  (no protocol) -> auto-prepend https:// if it parses
+  //      cleanly with the prefix added. Common paste-from-Vercel-input
+  //      mistake (people drop the protocol when copying from a Gumroad
+  //      address bar). Auto-prepending here is safer than failing
+  //      silently behind a fallback URL.
+  // Anything else (ftp://, mailto:, garbage, just a path) is rejected
+  // with a console.warn that surfaces the offending value so DevTools
+  // explains the misconfig instead of silently fading to placeholder.
   let bundleUrlBase = '';
   let bundleUrlWarning = '';
+  let bundleSourceDetail = ''; // appended to the diagnostic comment
   if (bundleUrlBaseRaw) {
-    let parsed;
-    try { parsed = new URL(bundleUrlBaseRaw); } catch (_) {}
-    if (parsed && (parsed.protocol === 'https:' || parsed.protocol === 'http:')) {
-      bundleUrlBase = bundleUrlBaseRaw;
-    } else {
+    const tryParse = (candidate) => {
+      try {
+        const u = new URL(candidate);
+        if (u.protocol === 'https:' || u.protocol === 'http:') {
+          // Require a non-empty host. `new URL("https://")` parses
+          // but produces an empty hostname; we don't want that.
+          if (u.hostname) return u.toString();
+        }
+      } catch (_) {}
+      return null;
+    };
+
+    const direct = tryParse(bundleUrlBaseRaw);
+    if (direct) {
+      bundleUrlBase = direct;
+      bundleSourceDetail = 'as-typed';
+    } else if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(bundleUrlBaseRaw)) {
+      // No protocol scheme detected — try prepending https://. We
+      // only do this when the input doesn't already declare some
+      // other scheme, so e.g. "ftp://..." still gets rejected
+      // outright instead of being silently rewritten.
+      const prefixed = tryParse('https://' + bundleUrlBaseRaw);
+      if (prefixed) {
+        bundleUrlBase = prefixed;
+        bundleSourceDetail = 'auto-prefixed https://';
+      }
+    }
+
+    if (!bundleUrlBase) {
       bundleUrlWarning =
         'BUNDLE_URL_BASE env var is not a valid absolute http(s) URL ' +
         '(got: ' + JSON.stringify(bundleUrlBaseRaw) + '). ' +
@@ -92,13 +129,17 @@ module.exports = (req, res) => {
   // sensitive env vars here.
   const generatedAt = new Date().toISOString();
   const bundleSource = bundleUrlBase
-    ? 'env (validated)'
+    ? `env (validated${bundleSourceDetail ? ', ' + bundleSourceDetail : ''})`
     : (bundleUrlBaseRaw ? 'env (REJECTED — see warning below)' : 'unset');
+  const bundleRawDisplay = bundleUrlBaseRaw
+    ? JSON.stringify(bundleUrlBaseRaw)
+    : '(empty / unset)';
   const diagnosticBlock =
     `/* Sleep Tight public config\n` +
     ` * generated_at:    ${generatedAt}\n` +
     ` * bundle_url:      ${bundleUrlBase || '(null — using thank-you fallback URL)'}\n` +
     ` * bundle_source:   ${bundleSource}\n` +
+    ` * raw_env_value:   ${bundleRawDisplay}\n` +
     ` * pixel_id_set:    ${Boolean(pixelId && /^\d+$/.test(pixelId))}\n` +
     ` */\n`;
 
