@@ -37,10 +37,12 @@
 
 module.exports = (req, res) => {
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-  // Short edge cache so env-var rotations propagate quickly. The
-  // serverless container keeps env reads hot anyway, so the cost
-  // of rebuilding the body per origin request is negligible.
-  res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+  // 60s cache on both the Vercel edge (s-maxage) and the browser
+  // (max-age). Short enough that env-var rotations propagate within
+  // a minute, long enough that a thank-you page burst still gets
+  // edge-served. Was 300s previously, which made env-var debugging
+  // painful — every typo took ~5 min to disprove.
+  res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60');
 
   const pixelId = process.env.META_PIXEL_ID;
   const bundleUrlBaseRaw = (process.env.BUNDLE_URL_BASE || '').trim();
@@ -73,6 +75,33 @@ module.exports = (req, res) => {
     }
   }
 
+  // Self-diagnostic comment block at the head of the response.
+  // When debugging "why is the thank-you page still showing the old
+  // URL?" the answer is almost always one of three things:
+  //   1. Browser cached the previous response (force-refresh /api/pixel.js)
+  //   2. Vercel edge cached the previous response (60s TTL — wait, or
+  //      append a query string like ?_=<ts> to bypass the cache key)
+  //   3. The env var hasn't been picked up by the deployed function
+  //      (changing env vars in Vercel requires a redeploy to take
+  //      effect on the active production deployment)
+  // Surface enough state in the body that we can rule each out with
+  // a direct browser fetch instead of guessing.
+  //
+  // SAFE TO SURFACE: BUNDLE_URL_BASE is a public Gumroad URL — we'd
+  // be embedding it in the response anyway. We do NOT include any
+  // sensitive env vars here.
+  const generatedAt = new Date().toISOString();
+  const bundleSource = bundleUrlBase
+    ? 'env (validated)'
+    : (bundleUrlBaseRaw ? 'env (REJECTED — see warning below)' : 'unset');
+  const diagnosticBlock =
+    `/* Sleep Tight public config\n` +
+    ` * generated_at:    ${generatedAt}\n` +
+    ` * bundle_url:      ${bundleUrlBase || '(null — using thank-you fallback URL)'}\n` +
+    ` * bundle_source:   ${bundleSource}\n` +
+    ` * pixel_id_set:    ${Boolean(pixelId && /^\d+$/.test(pixelId))}\n` +
+    ` */\n`;
+
   // Public-config envelope. Always emitted (even when env vars are
   // unset) so consumers can `window.__SLEEP_TIGHT_PUBLIC_CONFIG__?.bundleUrl`
   // safely. JSON.stringify handles embedded quotes / newlines
@@ -90,7 +119,9 @@ module.exports = (req, res) => {
     // Pixel disabled — still emit the public-config envelope so
     // the thank-you page's bundle CTA can wire up.
     return res.status(200).send(
-      `/* Meta Pixel disabled: META_PIXEL_ID not set */\n${configBlock}`
+      diagnosticBlock +
+      `/* Meta Pixel disabled: META_PIXEL_ID not set */\n` +
+      configBlock
     );
   }
 
@@ -100,5 +131,5 @@ module.exports = (req, res) => {
 fbq('init', ${JSON.stringify(pixelId)});
 fbq('track', 'PageView');
 `;
-  return res.status(200).send(pixelBlock + configBlock);
+  return res.status(200).send(diagnosticBlock + pixelBlock + configBlock);
 };
