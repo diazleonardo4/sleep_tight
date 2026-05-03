@@ -223,8 +223,18 @@ async function handleWrite(req, res, url, qRaw, aRaw) {
     // Swallow — we still want to redirect the subscriber.
   }
 
+  // Pass q + a through the redirect so /thank-you can render a
+  // variant tailored to the answer (e.g. racing_thoughts gets the
+  // bundle pitch; sleeping_better gets a warm congrats). Both
+  // values were already sanitized through sanitizeKeyish (alnum +
+  // _ - only) so they're safe to drop into a URL without further
+  // encoding — but encodeURIComponent is cheap insurance against a
+  // future relaxation of the allowlist.
   res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Location', THANK_YOU_PATH);
+  res.setHeader(
+    'Location',
+    `${THANK_YOU_PATH}?q=${encodeURIComponent(q)}&a=${encodeURIComponent(a)}`
+  );
   return res.status(302).end();
 }
 

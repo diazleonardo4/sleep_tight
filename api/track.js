@@ -24,6 +24,13 @@ const VALID_EVENTS = new Set([
   'form_submit_success',
   'form_submit_error',
   'exit_intent',
+  // Fired from /thank-you when a subscriber clicks the bundle CTA
+  // on a feedback-tailored variant. Carries metadata.source and
+  // metadata.answer so the dashboard's exit-intent / cta-click
+  // breakdowns can distinguish landing-page CTAs from feedback
+  // upsell clicks. Keeping it as its own event type (rather than
+  // overloading cta_click) avoids polluting the landing CTA panel.
+  'bundle_click',
 ]);
 
 // Internal / test visitor_ids (Leo + Claude + any QA devices). Populated

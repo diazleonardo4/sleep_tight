@@ -11,10 +11,10 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
 
-<!-- Meta Pixel — base code + PageView. Same loader as the landing
-     page (api/pixel.js injects the id from META_PIXEL_ID); enables
-     thank-you visit tracking without any extra fbq calls on this
-     page. Fires PageView once at boot and that's it. -->
+<!-- Meta Pixel — base code + auto PageView. Same loader as the
+     landing page (api/pixel.js injects the id from META_PIXEL_ID).
+     The render script below adds ViewContent when the variant is a
+     bundle pitch and InitiateCheckout when the CTA is clicked. -->
 <script async src="/api/pixel.js"></script>
 
 <style>
@@ -23,6 +23,7 @@
     --gold:    #D4A843;
     --cream:   #FDF6EC;
     --ink:     #4a5a72;
+    --border-soft: #e2e8f0;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -32,7 +33,7 @@
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
     display: flex; align-items: center; justify-content: center;
-    padding: 24px;
+    padding: 32px 24px;
   }
   h1 {
     font-family: 'Quicksand', sans-serif;
@@ -41,11 +42,11 @@
     font-size: clamp(28px, 5vw, 40px);
     color: var(--navy);
     line-height: 1.15;
-    margin-bottom: 14px;
+    margin-bottom: 18px;
     text-wrap: balance;
   }
   .card {
-    width: 100%; max-width: 520px; text-align: center;
+    width: 100%; max-width: 560px; text-align: center;
     padding: 8px 0;
   }
   .eyebrow {
@@ -56,25 +57,72 @@
     letter-spacing: 0.18em;
     text-transform: uppercase;
     color: var(--gold);
-    margin-bottom: 20px;
+    margin-bottom: 22px;
   }
-  .lead {
-    font-size: 17px;
-    line-height: 1.6;
+  .thanks {
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--navy);
+    margin-bottom: 22px;
+  }
+  .body {
+    font-size: 16px;
+    line-height: 1.65;
     color: var(--ink);
-    margin-bottom: 36px;
+    margin: 0 auto 24px;
+    max-width: 460px;
     text-wrap: pretty;
   }
+  .body p + p { margin-top: 14px; }
+  .body strong { color: var(--navy); }
+  .signoff {
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 600;
+    color: var(--navy);
+    margin-top: 18px;
+    font-size: 15px;
+  }
+  .price {
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--navy);
+    margin-top: 14px;
+  }
+  .cta-primary {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--navy);
+    background: var(--gold);
+    padding: 14px 26px;
+    border-radius: 10px;
+    text-decoration: none;
+    box-shadow: 0 4px 14px rgba(212, 168, 67, 0.32);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    margin-top: 22px;
+    border: none;
+    cursor: pointer;
+  }
+  .cta-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(212, 168, 67, 0.4);
+  }
+  .cta-primary:active { transform: translateY(0); }
+  .cta-primary__arrow { font-size: 18px; line-height: 1; }
   .followup {
-    border-top: 1px solid rgba(26, 39, 68, 0.12);
-    padding-top: 28px;
-    margin-top: 8px;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 24px;
+    margin-top: 28px;
   }
   .followup__label {
     font-size: 14px;
     color: var(--ink);
-    margin-bottom: 14px;
+    margin-bottom: 12px;
   }
+  .followup__label--secondary { margin-top: 22px; }
   .download {
     display: inline-flex; align-items: center; gap: 8px;
     font-family: 'Quicksand', sans-serif;
@@ -94,21 +142,374 @@
   }
   .download:active { transform: translateY(0); }
   .download__arrow { font-size: 18px; line-height: 1; }
+  /* Subtle bundle link for variants that aren't actively pitching
+     (default + sleeping_better). Looks like a normal text link, not
+     a CTA — the goal is "available if you want it" not "buy now". */
+  .bundle-link {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-thickness: 1px;
+    text-decoration-color: rgba(74, 90, 114, 0.4);
+    font-size: 14px;
+  }
+  .bundle-link:hover {
+    color: var(--navy);
+    text-decoration-color: var(--navy);
+  }
 </style>
 </head>
 <body>
   <main class="card">
     <span class="eyebrow">Sleep Tight</span>
-    <h1>Thanks for your feedback!</h1>
-    <p class="lead">Your response helps us make the guide better.</p>
-
-    <div class="followup">
-      <p class="followup__label">Haven't opened the guide yet?</p>
-      <a class="download" href="/api/download-pdf" rel="noopener">
-        Download Sleep Tight
-        <span class="download__arrow" aria-hidden="true">&rarr;</span>
-      </a>
+    <p class="thanks">Thanks for your feedback!</p>
+    <div id="content">
+      <!-- Render script populates this slot based on ?a= -->
     </div>
   </main>
+
+<!--
+  Self-hosted analytics IIFE — same module as index.html (slimmed for
+  this page: no scroll-depth, no form, no exit-intent listeners; we
+  only need pageview tracking + window.trackEvent for the bundle CTA).
+  Posts to /api/track. Fails silently — page render must always
+  succeed. Keeping the queue + retry shape so a transient 5xx during
+  thank-you-page traffic spikes (e.g. an email blast) doesn't drop
+  the bundle_click signal that drives upsell measurement.
+-->
+<script>
+(function () {
+  function getOrCreateVisitorId() {
+    var KEY = 'st_vid';
+    try {
+      var id = localStorage.getItem(KEY);
+      if (!id) {
+        if (window.crypto && crypto.randomUUID) {
+          id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+        } else {
+          id = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+        }
+        localStorage.setItem(KEY, id);
+      }
+      return id;
+    } catch (e) {
+      return 'anon_' + Math.random().toString(36).slice(2, 10);
+    }
+  }
+
+  var VISITOR_ID = getOrCreateVisitorId();
+  var SESSION_ID = 'sess_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  var urlParams = new URLSearchParams(window.location.search);
+  var baseData = {
+    visitor_id: VISITOR_ID,
+    session_id: SESSION_ID,
+    path: window.location.pathname,
+    referrer: document.referrer || '',
+    utm_source: urlParams.get('utm_source') || '',
+    utm_medium: urlParams.get('utm_medium') || '',
+    utm_campaign: urlParams.get('utm_campaign') || '',
+    utm_content: urlParams.get('utm_content') || '',
+    utm_placement: urlParams.get('utm_placement') || '',
+  };
+
+  var ENDPOINT = '/api/track';
+  var eventQueue = [];
+  var FLUSH_INTERVAL_MS = 2000;
+  var FLUSH_THRESHOLD = 10;
+  var flushTimer = null;
+  function scheduleFlush() {
+    if (flushTimer) return;
+    flushTimer = setTimeout(function () { flushTimer = null; flush(); }, FLUSH_INTERVAL_MS);
+  }
+  var MAX_RETRIES = 2;
+  var BACKOFF_MS = [1000, 3000];
+  function shouldRetry(status) {
+    return status === undefined || (status >= 500 && status < 600);
+  }
+  function sendBatch(body, attempt) {
+    try {
+      return fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body,
+        keepalive: true,
+      }).then(function (r) {
+        if (!r.ok && shouldRetry(r.status) && attempt < MAX_RETRIES) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(sendBatch(body, attempt + 1)); }, BACKOFF_MS[attempt]);
+          });
+        }
+        return r;
+      }).catch(function () {
+        if (attempt < MAX_RETRIES) {
+          return new Promise(function (resolve) {
+            setTimeout(function () { resolve(sendBatch(body, attempt + 1)); }, BACKOFF_MS[attempt]);
+          });
+        }
+      });
+    } catch (_) {}
+  }
+  function flush(useBeacon) {
+    if (eventQueue.length === 0) return;
+    var batch = eventQueue.splice(0, eventQueue.length);
+    var body = JSON.stringify({ events: batch });
+    if (useBeacon && navigator.sendBeacon) {
+      try {
+        var blob = new Blob([body], { type: 'application/json' });
+        navigator.sendBeacon(ENDPOINT, blob);
+        return;
+      } catch (_) { /* fall through to fetch */ }
+    }
+    sendBatch(body, 0);
+  }
+  function track(event, metadata) {
+    eventQueue.push(Object.assign({}, baseData, {
+      event: event,
+      metadata: metadata || {},
+      t: Date.now(),
+    }));
+    if (eventQueue.length >= FLUSH_THRESHOLD) {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      flush();
+    } else {
+      scheduleFlush();
+    }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flush(true);
+  });
+  window.addEventListener('pagehide', function () { flush(true); });
+
+  window.trackEvent = track;
+  // Pageview fires whether the variant is a pitch or not — we want
+  // total thank-you traffic measured even for the "sleeping_better"
+  // segment (it's a positive-feedback signal worth tracking too).
+  track('pageview');
+})();
+</script>
+
+<!--
+  Variant render + CTA wiring. Reads ?a=<answer> and fills #content
+  with one of five blocks. Three pitch variants (racing_thoughts /
+  early_waking / nothing_works) carry an InitiateCheckout-eligible
+  primary CTA; sleeping_better gets a warm congrats with a soft
+  bundle link; everything else (yes/no/somewhat/not_yet/missing)
+  gets the generic "thanks + download" default.
+-->
+<script>
+(function () {
+  // Hardcoded bundle URL. Could route through an env-var indirection
+  // similar to /api/download-pdf, but Vercel Hobby's 12-function cap
+  // is already tight — and the Gumroad URL is public anyway, so the
+  // benefit of the indirection layer doesn't pay for an extra
+  // serverless function. To rotate, edit this constant and redeploy.
+  var BUNDLE_URL_BASE = 'https://luna-wells.gumroad.com/l/sleep-reset';
+  var BUNDLE_PRICE = 29.99;
+  var BUNDLE_CURRENCY = 'USD';
+
+  // Build the Gumroad URL with feedback-attribution UTMs so the
+  // dashboard's byCampaign / byUtmContent can split bundle revenue
+  // by which feedback answer drove it.
+  function bundleUrl(utmContent) {
+    var u = new URL(BUNDLE_URL_BASE);
+    u.searchParams.set('utm_source', 'feedback');
+    u.searchParams.set('utm_medium', 'email');
+    u.searchParams.set('utm_campaign', 'feedback_thankyou');
+    if (utmContent) u.searchParams.set('utm_content', utmContent);
+    return u.toString();
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+  }
+
+  function ctaButton(utmContent) {
+    var href = escapeHtml(bundleUrl(utmContent));
+    return '<a class="cta-primary" id="bundleCta" href="' + href + '" data-utm-content="' + escapeHtml(utmContent) + '" rel="noopener">' +
+           'Start the 7-Day Reset' +
+           '<span class="cta-primary__arrow" aria-hidden="true">&rarr;</span>' +
+           '</a>';
+  }
+
+  function softBundleLink(label) {
+    var href = escapeHtml(bundleUrl('sleeping_better'));
+    return '<a class="bundle-link" id="bundleSoftLink" href="' + href + '" rel="noopener">' +
+           escapeHtml(label) + '</a>';
+  }
+
+  // Variant table. `pitches: true` means the variant fires
+  // ViewContent on render and the CTA fires InitiateCheckout. The
+  // `body` field is HTML — keep it source-controlled here, not
+  // assembled from user input, so escapeHtml is unnecessary inside.
+  var VARIANTS = {
+    sleeping_better: {
+      pitches: false,
+      utmContent: 'sleeping_better',
+      body:
+        '<div class="body">' +
+          "<p>That's amazing &mdash; seriously.</p>" +
+          '<p>The guide did exactly what it was supposed to do. Keep using ' +
+          "what's working.</p>" +
+          '<p>If you ever want to go deeper, the 7-Day Sleep Reset is here ' +
+          "whenever you're ready. But honestly? If you're sleeping better, " +
+          'you might not need it.</p>' +
+          '<p>Sleep well tonight.</p>' +
+          '<p class="signoff">&mdash; Luna</p>' +
+        '</div>' +
+        '<div class="followup">' +
+          softBundleLink('Curious about the 7-Day Reset anyway?') +
+        '</div>',
+    },
+    racing_thoughts: {
+      pitches: true,
+      utmContent: 'racing_thoughts',
+      body:
+        '<div class="body">' +
+          '<p>Racing thoughts at 2am &mdash; that&rsquo;s the hardest one.</p>' +
+          '<p>Breathing techniques help for a few nights, but your brain ' +
+          'learns to race right through them.</p>' +
+          '<p>The <strong>7-Day Sleep Reset</strong> was built specifically ' +
+          'for this. Day 4 and Day 6 focus entirely on thought-racing &mdash; ' +
+          "using a rotation of techniques your brain can't adapt to.</p>" +
+          '<p>It also comes with a <strong>2am Emergency Card</strong>: when ' +
+          'you wake up with your mind going, just follow the card. Step 1, 2, ' +
+          '3. Four minutes.</p>' +
+          '<p class="price">$29.99, one time. No subscription.</p>' +
+        '</div>' +
+        ctaButton('racing_thoughts'),
+    },
+    early_waking: {
+      pitches: true,
+      utmContent: 'early_waking',
+      body:
+        '<div class="body">' +
+          '<p>Early waking is frustrating &mdash; you fall asleep fine but ' +
+          "your eyes open at 4am and that's it.</p>" +
+          '<p>This is usually a <strong>timing problem</strong>, not a ' +
+          'falling-asleep problem. Your sleep pressure and circadian rhythm ' +
+          'are out of sync.</p>' +
+          '<p>The <strong>7-Day Sleep Reset</strong> addresses this directly ' +
+          'on Days 1 and 5 &mdash; resetting your wake-time anchor and ' +
+          'fixing the light exposure patterns that shift your clock forward.</p>' +
+          '<p class="price">$29.99, one time. No subscription.</p>' +
+        '</div>' +
+        ctaButton('early_waking'),
+    },
+    nothing_works: {
+      pitches: true,
+      utmContent: 'nothing_works',
+      body:
+        '<div class="body">' +
+          '<p>&ldquo;Nothing works&rdquo; usually means you&rsquo;ve tried a ' +
+          'lot of individual things &mdash; melatonin, breathing, screen ' +
+          'limits, white noise &mdash; and none of them stuck.</p>' +
+          '<p>That&rsquo;s the most common pattern. Single techniques work ' +
+          'for 3&ndash;5 nights before your nervous system adapts.</p>' +
+          '<p>The <strong>7-Day Sleep Reset</strong> is built for exactly ' +
+          'this. Instead of &ldquo;try this one thing,&rdquo; it&rsquo;s a ' +
+          "different approach each night, in a specific order, so your brain " +
+          "can't adapt to any single one.</p>" +
+          '<p class="price">$29.99, one time. No subscription.</p>' +
+        '</div>' +
+        ctaButton('nothing_works'),
+    },
+  };
+
+  // Default variant — generic thanks + download CTA + soft bundle
+  // link. Used for: missing ?a=, "yes" / "no" / "somewhat" / "not_yet"
+  // from the breath / bundle_interest questions, and any unknown
+  // value (so a freshly-added survey answer that doesn't have a
+  // dedicated variant still renders cleanly).
+  var DEFAULT_VARIANT = {
+    pitches: false,
+    utmContent: 'default',
+    body:
+      '<div class="body">' +
+        '<p>Your response helps us make the guide better.</p>' +
+      '</div>' +
+      '<div class="followup">' +
+        '<p class="followup__label">Haven&rsquo;t opened the guide yet?</p>' +
+        '<a class="download" href="/api/download-pdf" rel="noopener">' +
+          'Download Sleep Tight' +
+          '<span class="download__arrow" aria-hidden="true">&rarr;</span>' +
+        '</a>' +
+        '<p class="followup__label followup__label--secondary">Want to go deeper?</p>' +
+        softBundleLink('Browse the 7-Day Sleep Reset'),
+  };
+
+  function pickVariant() {
+    var params = new URLSearchParams(window.location.search);
+    var a = (params.get('a') || '').trim();
+    if (Object.prototype.hasOwnProperty.call(VARIANTS, a)) return VARIANTS[a];
+    return DEFAULT_VARIANT;
+  }
+
+  var variant = pickVariant();
+  document.getElementById('content').innerHTML = variant.body;
+
+  // Pixel ViewContent fires on the pitched variants only. The
+  // sleeping_better page is a positive feedback acknowledgement and
+  // (per spec) shouldn't pollute the bundle audience optimization.
+  // /api/pixel.js is async — it might not have evaluated by the time
+  // we hit this line. fbq is a queue once the snippet runs, so as
+  // long as we feature-detect at fire time we're safe; we wrap the
+  // call in a small retry loop in case the script is still in flight.
+  function tryPixelViewContent(retriesLeft) {
+    if (typeof fbq === 'function') {
+      fbq('track', 'ViewContent', {
+        content_name: 'Sleep Reset Bundle',
+        content_category: 'feedback_upsell',
+        value: 29.99,
+        currency: 'USD',
+      });
+      return;
+    }
+    if (retriesLeft > 0) {
+      setTimeout(function () { tryPixelViewContent(retriesLeft - 1); }, 250);
+    }
+  }
+  if (variant.pitches) tryPixelViewContent(8); // ~2s of polling tops
+
+  // CTA wiring. Both the primary CTA (pitch variants) and the soft
+  // bundle link share this handler — the only behavior difference is
+  // that the primary CTA fires InitiateCheckout (a stronger purchase
+  // intent signal) while the soft link fires neither Pixel event.
+  function attachCta(el, opts) {
+    if (!el) return;
+    el.addEventListener('click', function (ev) {
+      // Don't preventDefault — we want the navigation to happen
+      // normally so the user lands on Gumroad. The Pixel + analytics
+      // calls are fire-and-forget; sendBeacon in the analytics queue
+      // ensures the event survives the unload that follows.
+      var answerParam = (new URLSearchParams(location.search)).get('a') || '';
+      try {
+        if (opts.firePixel && typeof fbq === 'function') {
+          fbq('track', 'InitiateCheckout', {
+            content_name: 'Sleep Reset Bundle',
+            value: 29.99,
+            currency: 'USD',
+          });
+        }
+      } catch (_) {}
+      try {
+        if (window.trackEvent) {
+          window.trackEvent('bundle_click', {
+            source: 'feedback_thankyou',
+            answer: answerParam,
+            cta_variant: opts.kind, // 'primary' | 'soft'
+          });
+        }
+      } catch (_) {}
+      // Don't return false — let the browser navigate.
+    }, { passive: true });
+  }
+
+  attachCta(document.getElementById('bundleCta'),       { firePixel: true,  kind: 'primary' });
+  attachCta(document.getElementById('bundleSoftLink'),  { firePixel: false, kind: 'soft' });
+})();
+</script>
 </body>
 </html>
