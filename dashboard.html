@@ -895,10 +895,13 @@
       fetchJson('/api/email-stats'),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
       fetchJson(`/api/campaigns?range=${r}`),
-      // Feedback is all-time — no range param. Lives next to the
-      // others in this Promise.allSettled so a feedback fetch error
+      // Feedback is all-time — no range param. /api/feedback with no
+      // query params hits the stats path of that endpoint (the same
+      // file also handles writes when q+a are present, so we don't
+      // burn an extra serverless function on Hobby's 12-fn cap).
+      // Lives in this Promise.allSettled so a feedback fetch error
       // can't cascade into the rest of the dashboard.
-      fetchJson('/api/feedback-stats'),
+      fetchJson('/api/feedback'),
     ]);
 
     for (const res of [meta, ml, analytics, email, config, campaigns, feedback]) {

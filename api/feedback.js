@@ -1,11 +1,29 @@
-// GET /api/feedback?q=<question>&a=<answer>&e=<email>
+// /api/feedback — dual-purpose endpoint.
 //
-// Public, no-auth one-click feedback collector for email-embedded
-// surveys. Each survey link in a MailerLite email points here with
-// q/a (and optional e merge tag for per-subscriber dedup). We log
-// the response, redirect 302 to /thank-you, and never echo anything
-// useful back — these get clicked by subscribers, not authenticated
-// callers.
+// Two GET request shapes, routed by what's present:
+//
+//   1. WRITE / REDIRECT (public, no auth):
+//        GET /api/feedback?q=<question>&a=<answer>&e=<email>
+//      Logs the response, 302s to /thank-you. This is the URL
+//      embedded in MailerLite survey links.
+//
+//   2. STATS (auth, header x-auth-token):
+//        GET /api/feedback
+//      Returns the cumulative all-time aggregate consumed by the
+//      dashboard's "Reader feedback" section.
+//
+// Why one endpoint instead of two: Vercel's Hobby plan caps a
+// deployment at 12 serverless functions. Splitting writer + reader
+// into separate files would push us over. The shapes are disjoint
+// (writer needs query params + no auth; reader needs auth + no
+// query params), so the routing is unambiguous.
+//
+// Routing rule:
+//   - q AND a present  → write path (auth IGNORED — public link)
+//   - q OR a present alone → 400 (subscriber link malformed)
+//   - neither present → stats path (auth REQUIRED)
+//
+// =================== WRITE PATH NOTES ===================
 //
 // Why GET (not POST): email clients only fire GETs on link clicks.
 // No CSRF concern because there is no per-subscriber privileged
@@ -31,19 +49,46 @@
 //   appended both times so the audit trail is complete.
 //
 //   Without ?e= we have no stable subject identity, so duplicate
-//   clicks all count. That's documented behavior — a fallback to
-//   IP/visitor_id-based dedup would punish shared-network clicks
-//   from the same household far more than it'd help.
+//   clicks all count. Documented behavior — IP/visitor_id-based
+//   dedup would punish shared-network clicks far more than help.
 //
 //   The original spec asked for a SET (feedback_seen:<date>:<q>)
 //   storing email_hash membership. A SET can confirm "we saw this
 //   subscriber" but can't tell us their PRIOR answer to decrement.
-//   We use a HASH instead (email_hash -> answer) so one read
-//   answers both questions in a single round trip.
+//   We use a HASH (email_hash -> answer) so one read answers both
+//   in a single round trip.
 //
 // Always responds 302 to /thank-you when q/a are present, even on
 // Redis errors — we never want a transient infra hiccup to leave a
 // subscriber staring at a JSON error page.
+//
+// =================== STATS PATH NOTES ===================
+//
+// Cumulative all-time aggregate. Feedback volume is low and the
+// cohort is tiny, so date-filtering would shred sample sizes. The
+// write path maintains feedback:total:<q>:<a> counters per
+// response, which we just fan out and read here.
+//
+// Response shape:
+// {
+//   fetched_at: <epoch ms>,
+//   questions: [
+//     {
+//       q: "breath",
+//       total: 23,
+//       answers: [
+//         { a: "yes",      count: 17, pct: 0.74 },
+//         { a: "somewhat", count:  4, pct: 0.17 },
+//         { a: "no",       count:  2, pct: 0.09 },
+//       ],
+//     },
+//     ...
+//   ],
+// }
+//
+// Questions/answers are auto-discovered from the SETs maintained
+// at write time. 60s memo cache so dashboard refreshes don't fan
+// out a fresh pipeline of MGETs per click.
 
 const crypto = require('crypto');
 const { getRedis } = require('../lib/redis');
@@ -53,6 +98,9 @@ const COUNTER_TTL = 60 * 60 * 24 * 365; // match /api/track
 const EVENT_TTL   = 60 * 60 * 24 * 90;  // match /api/track
 const THANK_YOU_PATH = '/thank-you';
 
+const statsCache = new Map(); // 'all' -> { data, at }
+const STATS_CACHE_MS = 60 * 1000;
+
 module.exports = async (req, res) => {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -60,8 +108,23 @@ module.exports = async (req, res) => {
   }
 
   const url = new URL(req.url, 'http://x');
-  const q = sanitizeKeyish(url.searchParams.get('q'));
-  const a = sanitizeKeyish(url.searchParams.get('a'));
+  const qRaw = url.searchParams.get('q');
+  const aRaw = url.searchParams.get('a');
+
+  // No q AND no a → stats path. The (auth-gated) reader.
+  if (qRaw == null && aRaw == null) {
+    return handleStats(req, res);
+  }
+
+  // Either both present or one missing → write path.
+  return handleWrite(req, res, url, qRaw, aRaw);
+};
+
+// ---------- WRITE PATH ----------
+
+async function handleWrite(req, res, url, qRaw, aRaw) {
+  const q = sanitizeKeyish(qRaw);
+  const a = sanitizeKeyish(aRaw);
   const e = (url.searchParams.get('e') || '').trim();
 
   if (!q || !a) {
@@ -91,7 +154,7 @@ module.exports = async (req, res) => {
   };
 
   // Best-effort write — feedback redirect must succeed even if Redis
-  // is degraded. Errors are logged server-side only.
+  // is degraded.
   try {
     const redis = getRedis();
 
@@ -151,6 +214,11 @@ module.exports = async (req, res) => {
     }
 
     await pipeline.exec();
+
+    // Bust the stats cache so the dashboard sees this new vote on
+    // the next refresh instead of waiting up to 60s for the memo
+    // entry to expire. Free since we own both sides of the cache.
+    statsCache.delete('all');
   } catch (_) {
     // Swallow — we still want to redirect the subscriber.
   }
@@ -158,7 +226,100 @@ module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Location', THANK_YOU_PATH);
   return res.status(302).end();
-};
+}
+
+// ---------- STATS PATH ----------
+
+async function handleStats(req, res) {
+  if (!checkAuth(req, res)) return;
+
+  const hit = statsCache.get('all');
+  if (hit && Date.now() - hit.at < STATS_CACHE_MS) {
+    return res.status(200).json({ ...hit.data, cached: true, cached_at: hit.at });
+  }
+
+  try {
+    const data = await buildReport();
+    statsCache.set('all', { data, at: Date.now() });
+    return res.status(200).json(data);
+  } catch (err) {
+    return res.status(502).json({ error: `Feedback stats error: ${err.message}` });
+  }
+}
+
+async function buildReport() {
+  const redis = getRedis();
+
+  const questions = await redis.smembers('feedback:questions');
+  if (!questions || questions.length === 0) {
+    return { fetched_at: Date.now(), questions: [] };
+  }
+
+  // Two-pass fetch:
+  //   1. Per-question SMEMBERS to enumerate answers. Single
+  //      pipeline so we pay one round trip regardless of question
+  //      count.
+  //   2. MGET of every (q,a) total counter, again single round trip.
+  const answersPipeline = redis.pipeline();
+  for (const q of questions) {
+    answersPipeline.smembers(`feedback:answers:${q}`);
+  }
+  const answersResults = await answersPipeline.exec();
+
+  const pairs = [];
+  for (let i = 0; i < questions.length; i++) {
+    const q = questions[i];
+    const [err, answers] = answersResults[i] || [null, []];
+    if (err || !Array.isArray(answers)) continue;
+    for (const a of answers) {
+      pairs.push({ q, a });
+    }
+  }
+
+  let totals = [];
+  if (pairs.length > 0) {
+    const keys = pairs.map(p => `feedback:total:${p.q}:${p.a}`);
+    totals = await redis.mget(...keys);
+  }
+
+  const byQ = new Map();
+  for (let i = 0; i < pairs.length; i++) {
+    const { q, a } = pairs[i];
+    const count = parseInt(totals[i], 10) || 0;
+    // Drop zero-count answers — they exist in the answers SET because
+    // we recorded one click then rolled it back via dedup. The set
+    // membership stays for simplicity but rendering them as 0% rows
+    // would just confuse the dashboard.
+    if (count <= 0) continue;
+    if (!byQ.has(q)) byQ.set(q, []);
+    byQ.get(q).push({ a, count });
+  }
+
+  const out = [];
+  for (const q of questions) {
+    const answers = byQ.get(q) || [];
+    if (answers.length === 0) continue; // question with no live counts
+    const total = answers.reduce((s, x) => s + x.count, 0);
+    answers.sort((x, y) => y.count - x.count);
+    out.push({
+      q,
+      total,
+      answers: answers.map(x => ({
+        a: x.a,
+        count: x.count,
+        pct: total > 0 ? +(x.count / total).toFixed(4) : 0,
+      })),
+    });
+  }
+
+  // Sort questions by response volume desc — most-engaged surveys
+  // surface first on the dashboard.
+  out.sort((x, y) => y.total - x.total);
+
+  return { fetched_at: Date.now(), questions: out };
+}
+
+// ---------- shared helpers ----------
 
 // Strict allowlist for q/a tokens — they end up embedded in Redis
 // key names. Alphanumerics, underscore, hyphen only. Anything else
@@ -172,6 +333,16 @@ function sanitizeKeyish(v) {
 
 function sha256(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+function checkAuth(req, res) {
+  const expected = process.env.DASHBOARD_PASSWORD;
+  const token = req.headers['x-auth-token'];
+  if (!expected || !token || token !== expected) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return false;
+  }
+  return true;
 }
 
 // Identical UA parser to /api/track. Kept inline (rather than
