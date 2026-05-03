@@ -363,6 +363,59 @@
     margin-bottom: 12px;
   }
 
+  /* ---------- READER FEEDBACK ---------- */
+  /* Each question is a row in the card with a horizontal stacked-bar
+     visualization. The bar width is 100% of its container; each
+     answer segment claims its share by percentage. Tone is set via
+     a data-tone attribute on the segment so we can map answer
+     semantics (positive / neutral / negative) to colors without
+     CSS-per-answer-name. */
+  .feedback-card { display: flex; flex-direction: column; gap: 18px; }
+  .feedback-q__head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .feedback-q__label {
+    font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 14px;
+    color: var(--navy);
+  }
+  .feedback-q__count {
+    font-size: 12px; color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .feedback-bar {
+    display: flex; width: 100%; height: 22px;
+    border-radius: 6px; overflow: hidden;
+    background: var(--cream-warm, #f0e9db);
+  }
+  .feedback-seg {
+    height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 700; font-size: 11px;
+    letter-spacing: 0.02em;
+    overflow: hidden; white-space: nowrap;
+    transition: filter 0.15s ease;
+    cursor: default;
+  }
+  .feedback-seg:hover { filter: brightness(1.08); }
+  .feedback-seg[data-tone="positive"] { background: #4f9d5a; }
+  .feedback-seg[data-tone="neutral"]  { background: #d4a843; }
+  .feedback-seg[data-tone="negative"] { background: #b06a6a; }
+  .feedback-seg[data-tone="other"]    { background: #7a8aa5; }
+  .feedback-legend {
+    margin-top: 8px;
+    display: flex; flex-wrap: wrap; gap: 8px 14px;
+    font-size: 12px; color: var(--text-muted);
+  }
+  .feedback-legend__item {
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .feedback-legend__swatch {
+    width: 10px; height: 10px; border-radius: 2px;
+    display: inline-block;
+  }
+
   /* ---------- RESPONSIVE ---------- */
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
@@ -532,6 +585,19 @@
       <span class="eyebrow">automation stats · cached 5 min</span>
     </div>
     <div id="emailPanel"><div class="empty">Loading…</div></div>
+  </div>
+
+  <!-- LAYER 3d — READER FEEDBACK -->
+  <!-- Always all-time. Survey responses come in slowly enough that
+       date-filtering would shred sample sizes — the eyebrow makes the
+       cumulative scope explicit so it doesn't look like a bug when
+       the range toggle doesn't update this section. -->
+  <div class="section">
+    <div class="section__head">
+      <h2>Reader feedback</h2>
+      <span class="eyebrow">all-time</span>
+    </div>
+    <div id="feedbackPanel"><div class="empty">Loading…</div></div>
   </div>
 </div>
 
@@ -822,16 +888,20 @@
     // always needs to see every option). It's range-scoped, so the
     // counts shown next to each option always reflect the current
     // range — switching today/7d/30d updates the picker too.
-    const [meta, ml, analytics, email, config, campaigns] = await Promise.allSettled([
+    const [meta, ml, analytics, email, config, campaigns, feedback] = await Promise.allSettled([
       fetchJson(`/api/meta?range=${r}${c}`),
       fetchJson(`/api/mailerlite?range=${r}${c}`),
       fetchJson(`/api/analytics?range=${r}${c}`),
       fetchJson('/api/email-stats'),
       configPromise ? configPromise.then(p => p.value) : fetchJson('/api/config'),
       fetchJson(`/api/campaigns?range=${r}`),
+      // Feedback is all-time — no range param. Lives next to the
+      // others in this Promise.allSettled so a feedback fetch error
+      // can't cascade into the rest of the dashboard.
+      fetchJson('/api/feedback-stats'),
     ]);
 
-    for (const res of [meta, ml, analytics, email, config, campaigns]) {
+    for (const res of [meta, ml, analytics, email, config, campaigns, feedback]) {
       if (res.status === 'rejected' && res.reason && res.reason.status === 401) {
         sessionStorage.removeItem(TOKEN_KEY);
         location.reload();
@@ -849,6 +919,9 @@
     state.campaigns = campaigns.status === 'fulfilled' && Array.isArray(campaigns.value?.campaigns)
       ? campaigns.value.campaigns
       : [];
+    state.feedback = feedback.status === 'fulfilled'
+      ? feedback.value
+      : { questions: [], error: feedback.reason?.message || 'Feedback unavailable' };
 
     rebuildCampaignPicker();
     render();
@@ -989,6 +1062,7 @@
     renderPlacementTable();
     renderDimensionTables();
     renderEmailPanel();
+    renderFeedbackPanel();
   }
 
   // ---------- Campaign comparison table ----------
@@ -1574,6 +1648,170 @@
         <span class="stat-row__value">${fmt.int(sent)} sent · ${open}% open · ${click}% click</span>
       </div>
     `;
+  }
+
+  // ---------- Reader feedback panel ----------
+  // Auto-discovers questions from /api/feedback-stats — no hardcoded
+  // q values. Display labels for known questions live in
+  // FEEDBACK_QUESTION_LABELS; unknown q values fall back to the raw
+  // slug (so a freshly-added survey link starts working immediately,
+  // it just shows the raw q until the label table is updated).
+
+  // Maps q (slug) -> human-readable question text shown next to the bar.
+  // Add entries here as new survey questions go live in MailerLite.
+  const FEEDBACK_QUESTION_LABELS = {
+    breath:           'Did the 4-2-6 breath help?',
+    sleep_quality:    "How's your sleep this week?",
+    bundle_interest:  'Would a 7-day system interest you?',
+    barrier:          "What's still keeping you up?",
+  };
+
+  // Maps a (answer slug) -> tone bucket. Tone drives bar segment color
+  // (positive = green, neutral = gold, negative = red). Anything not
+  // listed falls into 'other' (slate). The same mapping covers
+  // multiple questions because answer slugs are reused across surveys.
+  const FEEDBACK_ANSWER_TONE = {
+    yes:              'positive',
+    sleeping_better:  'positive',
+    helped:           'positive',
+    somewhat:         'neutral',
+    maybe:            'neutral',
+    not_yet:          'neutral',
+    no:               'negative',
+    nothing_works:    'negative',
+    not_helpful:      'negative',
+  };
+
+  // Maps a -> human-readable label for the legend / segment text.
+  // Snake_case answer slugs become Title Case by default; this map is
+  // for cases where the natural casing differs (e.g. "4-2-6").
+  const FEEDBACK_ANSWER_LABELS = {
+    yes:              'Yes',
+    no:               'No',
+    somewhat:         'Somewhat',
+    maybe:            'Maybe',
+    not_yet:          'Not yet',
+    racing_thoughts:  'Racing thoughts',
+    early_waking:     'Early waking',
+    nothing_works:    'Nothing works',
+    sleeping_better:  'Sleeping better',
+    helped:           'Helped',
+    not_helpful:      'Not helpful',
+  };
+
+  function feedbackQuestionLabel(q) {
+    return FEEDBACK_QUESTION_LABELS[q] || q;
+  }
+  function feedbackAnswerLabel(a) {
+    if (FEEDBACK_ANSWER_LABELS[a]) return FEEDBACK_ANSWER_LABELS[a];
+    // Fallback: snake_case → Title Case so an unknown answer still
+    // reads as a clean label.
+    return String(a)
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+  }
+  function feedbackAnswerTone(a) {
+    return FEEDBACK_ANSWER_TONE[a] || 'other';
+  }
+
+  function renderFeedbackPanel() {
+    const wrap = document.getElementById('feedbackPanel');
+    if (!wrap) return;
+    const f = state.feedback || {};
+
+    if (f.error) {
+      wrap.innerHTML = `<div class="error">${escapeHtml(f.error)}</div>`;
+      return;
+    }
+    const questions = Array.isArray(f.questions) ? f.questions : [];
+    if (questions.length === 0) {
+      wrap.innerHTML = `
+        <div class="panel">
+          <div class="empty" style="padding:18px 0">
+            No feedback yet. Survey responses will appear here as
+            subscribers click the one-click feedback links in emails.
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    wrap.innerHTML = `
+      <div class="panel feedback-card">
+        ${questions.map(renderFeedbackQuestion).join('')}
+      </div>
+    `;
+  }
+
+  function renderFeedbackQuestion(item) {
+    const q = item?.q || '';
+    const answers = Array.isArray(item?.answers) ? item.answers : [];
+    const total = Number(item?.total || 0);
+    if (total <= 0 || answers.length === 0) return '';
+
+    // Each segment width is its share of total. Use pct from the API
+    // when present; recompute defensively if it's missing/zero so a
+    // partial response from an older API still renders sanely.
+    const segments = answers.map(ans => {
+      const count = Number(ans.count || 0);
+      const pct = ans.pct != null && ans.pct >= 0
+        ? Number(ans.pct)
+        : (total > 0 ? count / total : 0);
+      const pctRounded = Math.round(pct * 100);
+      return { a: ans.a, count, pct, pctRounded };
+    }).filter(s => s.count > 0);
+
+    if (segments.length === 0) return '';
+
+    const bar = segments.map(s => {
+      const tone = feedbackAnswerTone(s.a);
+      const label = feedbackAnswerLabel(s.a);
+      // Only show inline % text when the segment is wide enough to
+      // hold it (> 12% of the bar). Narrow segments rely on the
+      // legend below for identification.
+      const inline = s.pctRounded >= 12 ? `${s.pctRounded}%` : '';
+      const titleAttr = `${label} ${s.pctRounded}% (${s.count})`;
+      return `
+        <div class="feedback-seg" data-tone="${tone}"
+             style="width:${(s.pct * 100).toFixed(2)}%"
+             title="${escapeHtml(titleAttr)}">${escapeHtml(inline)}</div>
+      `;
+    }).join('');
+
+    const legend = segments.map(s => {
+      const tone = feedbackAnswerTone(s.a);
+      const label = feedbackAnswerLabel(s.a);
+      return `
+        <span class="feedback-legend__item">
+          <span class="feedback-legend__swatch" data-tone="${tone}"
+                style="background:${toneToSwatch(tone)}"></span>
+          ${escapeHtml(label)} ${s.pctRounded}%
+        </span>
+      `;
+    }).join('');
+
+    const responseWord = total === 1 ? 'response' : 'responses';
+    return `
+      <div class="feedback-q">
+        <div class="feedback-q__head">
+          <span class="feedback-q__label">${escapeHtml(feedbackQuestionLabel(q))}</span>
+          <span class="feedback-q__count">${fmt.int(total)} ${responseWord}</span>
+        </div>
+        <div class="feedback-bar">${bar}</div>
+        <div class="feedback-legend">${legend}</div>
+      </div>
+    `;
+  }
+
+  // Inline swatch color for the legend dots. Mirrors the CSS rules
+  // for .feedback-seg[data-tone] — kept in JS so the dots stay in
+  // sync with the bar without a second pass through stylesheet
+  // overrides. If you change the CSS palette, change this too.
+  function toneToSwatch(tone) {
+    return tone === 'positive' ? '#4f9d5a'
+         : tone === 'neutral'  ? '#d4a843'
+         : tone === 'negative' ? '#b06a6a'
+         :                       '#7a8aa5';
   }
 
   function escapeHtml(s) {

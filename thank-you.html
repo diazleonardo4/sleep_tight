@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thanks — Sleep Tight</title>
+<meta name="description" content="Thanks for your feedback — your response helps us make the Sleep Tight guide better." />
+<meta name="robots" content="noindex" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Meta Pixel — base code + PageView. Same loader as the landing
+     page (api/pixel.js injects the id from META_PIXEL_ID); enables
+     thank-you visit tracking without any extra fbq calls on this
+     page. Fires PageView once at boot and that's it. -->
+<script async src="/api/pixel.js"></script>
+
+<style>
+  :root {
+    --navy:    #1A2744;
+    --gold:    #D4A843;
+    --cream:   #FDF6EC;
+    --ink:     #4a5a72;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--cream);
+    color: var(--navy);
+    font-family: 'Nunito', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  h1 {
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    font-size: clamp(28px, 5vw, 40px);
+    color: var(--navy);
+    line-height: 1.15;
+    margin-bottom: 14px;
+    text-wrap: balance;
+  }
+  .card {
+    width: 100%; max-width: 520px; text-align: center;
+    padding: 8px 0;
+  }
+  .eyebrow {
+    display: inline-block;
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 20px;
+  }
+  .lead {
+    font-size: 17px;
+    line-height: 1.6;
+    color: var(--ink);
+    margin-bottom: 36px;
+    text-wrap: pretty;
+  }
+  .followup {
+    border-top: 1px solid rgba(26, 39, 68, 0.12);
+    padding-top: 28px;
+    margin-top: 8px;
+  }
+  .followup__label {
+    font-size: 14px;
+    color: var(--ink);
+    margin-bottom: 14px;
+  }
+  .download {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--navy);
+    background: var(--gold);
+    padding: 14px 26px;
+    border-radius: 10px;
+    text-decoration: none;
+    box-shadow: 0 4px 14px rgba(212, 168, 67, 0.32);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .download:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(212, 168, 67, 0.4);
+  }
+  .download:active { transform: translateY(0); }
+  .download__arrow { font-size: 18px; line-height: 1; }
+</style>
+</head>
+<body>
+  <main class="card">
+    <span class="eyebrow">Sleep Tight</span>
+    <h1>Thanks for your feedback!</h1>
+    <p class="lead">Your response helps us make the guide better.</p>
+
+    <div class="followup">
+      <p class="followup__label">Haven't opened the guide yet?</p>
+      <a class="download" href="/api/download-pdf" rel="noopener">
+        Download Sleep Tight
+        <span class="download__arrow" aria-hidden="true">&rarr;</span>
+      </a>
+    </div>
+  </main>
+</body>
+</html>
