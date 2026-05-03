@@ -11,11 +11,15 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:wght@400;500;600&display=swap" rel="stylesheet">
 
-<!-- Meta Pixel — base code + auto PageView. Same loader as the
-     landing page (api/pixel.js injects the id from META_PIXEL_ID).
-     The render script below adds ViewContent when the variant is a
-     bundle pitch and InitiateCheckout when the CTA is clicked. -->
-<script async src="/api/pixel.js"></script>
+<!-- Meta Pixel + public config. /api/pixel.js emits the standard
+     Pixel base code AND a public-config envelope
+     (window.__SLEEP_TIGHT_PUBLIC_CONFIG__) carrying BUNDLE_URL_BASE
+     from the Vercel env. Loaded SYNCHRONOUSLY (no async attribute)
+     so the inline render script at the bottom of body can read
+     window.__SLEEP_TIGHT_PUBLIC_CONFIG__.bundleUrl before wiring
+     CTAs. The landing page keeps the async load — only this page
+     depends on the config envelope being available pre-render. -->
+<script src="/api/pixel.js"></script>
 
 <style>
   :root {
@@ -299,12 +303,23 @@
 -->
 <script>
 (function () {
-  // Hardcoded bundle URL. Could route through an env-var indirection
-  // similar to /api/download-pdf, but Vercel Hobby's 12-function cap
-  // is already tight — and the Gumroad URL is public anyway, so the
-  // benefit of the indirection layer doesn't pay for an extra
-  // serverless function. To rotate, edit this constant and redeploy.
-  var BUNDLE_URL_BASE = 'https://luna-wells.gumroad.com/l/sleep-reset';
+  // Bundle URL — env-driven via /api/pixel.js's public-config
+  // envelope. The pixel.js endpoint reads BUNDLE_URL_BASE from
+  // Vercel env at request time and emits
+  // window.__SLEEP_TIGHT_PUBLIC_CONFIG__.bundleUrl. We piggyback on
+  // pixel.js because it already runs on every page; adding a
+  // dedicated /api/bundle redirect would push us over the
+  // 12-function Hobby cap.
+  //
+  // Fallback to a placeholder ONLY for local-dev / preview builds
+  // where the env var isn't set. Production must have BUNDLE_URL_BASE
+  // configured or every CTA will land on the placeholder URL (which
+  // 404s — the placeholder doesn't exist).
+  var FALLBACK_BUNDLE_URL = 'https://luna-wells.gumroad.com/l/sleep-reset';
+  var BUNDLE_URL_BASE = (
+    (window.__SLEEP_TIGHT_PUBLIC_CONFIG__ && window.__SLEEP_TIGHT_PUBLIC_CONFIG__.bundleUrl) ||
+    FALLBACK_BUNDLE_URL
+  );
   var BUNDLE_PRICE = 29.99;
   var BUNDLE_CURRENCY = 'USD';
 
