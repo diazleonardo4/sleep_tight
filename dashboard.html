@@ -346,8 +346,68 @@
     background: #fff; border-radius: 14px; padding: 20px 22px;
     box-shadow: 0 2px 8px rgba(26,39,68,0.06);
   }
-  .email-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 720px) { .email-grid { grid-template-columns: 1fr; } }
+  /* Three-card layout for the welcome (old + new) + purchase
+     funnels. auto-fit + minmax means: spread to as many columns
+     as fit at >=300px each, single column under that. The result
+     is 3-up on desktop, 2-up on mid widths, 1-up on phones --
+     no per-breakpoint media queries needed.
+     The legacy 2-up `.email-grid` selector is kept for
+     backwards-compat in case any other consumer relies on it. */
+  .email-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  /* "Winding down" treatment: muted color + dashed border so the
+     legacy welcome card visually steps back from the active one
+     without disappearing. Engagement rows stay readable; the
+     panel chrome is what changes. */
+  .panel--legacy {
+    border: 1px dashed var(--border, #d0dae8);
+    background: rgba(255, 255, 255, 0.65);
+    box-shadow: none;
+  }
+  .panel--legacy .stat-row__value,
+  .panel--legacy .email-panel__subject,
+  .panel--legacy .panel__title { color: var(--muted-dark, #5a6a7a); }
+  /* Status pills next to the panel title. "Active" gets the gold
+     accent (primary funnel to watch); "Winding down" uses a
+     subdued slate so it doesn't compete for attention. */
+  .panel__badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    vertical-align: middle;
+  }
+  .panel__badge--active { background: var(--gold, #D4A843); color: #fff; }
+  .panel__badge--legacy { background: rgba(120, 130, 150, 0.15); color: var(--muted-dark, #5a6a7a); }
+  .panel__badge--paused { background: rgba(176, 106, 106, 0.15); color: #b06a6a; }
+  /* Comparison row above the cards. Single-line on desktop, wraps
+     on narrow viewports. Border-bottom under it visually anchors
+     the cards as a group. */
+  .funnel-comparison {
+    background: #fff;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    color: var(--text-muted, #7a8a9a);
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    align-items: baseline;
+  }
+  .funnel-comparison strong {
+    font-family: 'Quicksand', sans-serif;
+    font-weight: 700;
+    color: var(--navy, #1A2744);
+  }
+  .funnel-comparison__label--legacy { color: var(--muted-dark, #5a6a7a); }
+  .funnel-comparison__placeholder { font-style: italic; }
   .email-panel__subject { font-family: 'Quicksand', sans-serif; font-weight: 700; font-size: 14px; color: var(--navy); margin-bottom: 4px; }
   .email-panel__sent { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
   .stat-row {
@@ -1495,52 +1555,193 @@
   }
 
   // ---------- Email panel ----------
-  // Renders two side-by-side cards (free funnel / paid funnel), one
-  // per MailerLite automation. Each card is independent — if welcome
-  // 200s and purchase 404s, the welcome card renders normally and
-  // the purchase card shows its scoped error. The two-column
-  // .email-grid collapses to one column under 720px (defined in the
-  // CSS above), so the cards stack vertically on mobile.
+  // Three-card layout, one per MailerLite automation:
+  //   - Old welcome (3-day) — winding down during transition
+  //   - New welcome (7-day) — active default for new signups
+  //   - Purchase (7-day post-sale) — unchanged
   //
-  // Inside each card we render every email step in data.emails as a
-  // numbered row (Email 1, Email 2, ...). The list length is dynamic:
-  // 3 emails for the welcome sequence, up to 7 for post-purchase. The
-  // backend auto-discovers email steps from MailerLite's automation
-  // response, so adding/removing emails in MailerLite is reflected on
-  // the next dashboard refresh — no code or env-var changes.
+  // Cards are independent — if one automation 404s, others render
+  // normally and the failed one shows its scoped error. Layout uses
+  // CSS grid with auto-fit so the row collapses to 2-up / 1-up
+  // automatically on narrower viewports.
   //
-  // Card rendering rules:
-  //   - automation key is null              → "Not configured"
-  //   - automation has an error             → scoped error message
-  //   - emails array is empty               → "No email steps in this
-  //                                            automation" (edge case)
-  //   - normal                              → header strip + email rows
+  // The new-welcome slot (welcome_new) is OMITTED entirely when its
+  // env var is unset — during the transition window the new
+  // automation might not exist yet in MailerLite, and we don't want
+  // to flash "Not configured" until Leo creates it. The other two
+  // slots keep their existing "Not configured" placeholder so any
+  // accidental env-var unset is loud, not silent.
+  //
+  // Above the cards, a one-line comparison shows old-pitch vs new-
+  // pitch open / click rates so we can see at a glance whether the
+  // new sequence is performing better. Hidden until both pitch
+  // emails have at least 10 sends (per spec — small samples are
+  // noisy and would mislead).
+  //
+  // When the legacy automation gets paused in MailerLite (enabled:
+  // false / status: 'paused'), its card collapses to a single
+  // summary line so it doesn't crowd the active funnel.
   function renderEmailPanel() {
     const wrap = document.getElementById('emailPanel');
     const e = state.email || {};
 
-    // Top-level error — fetch itself failed (e.g., network, top-level
-    // 5xx). Both cards collapse into a single error so we don't show
-    // duplicate "MailerLite token invalid" messages side-by-side.
+    // Top-level error — fetch itself failed. All cards collapse
+    // into a single error so we don't show duplicate "MailerLite
+    // token invalid" messages stacked.
     if (e.error) {
       wrap.innerHTML = `<div class="error">${escapeHtml(e.error)}</div>`;
       return;
     }
 
+    const oldWelcome = e.welcome_old != null ? e.welcome_old : e.welcome; // back-compat with the old single-welcome shape
+    const newWelcome = e.welcome_new;
+    const purchase = e.purchase;
+
+    const cards = [];
+    cards.push(automationCard({
+      eyebrow: 'Old free funnel · 3-day welcome',
+      badge: { kind: isAutomationPaused(oldWelcome) ? 'paused' : 'legacy',
+               label: isAutomationPaused(oldWelcome) ? 'Paused' : 'Winding down' },
+      legacy: true,
+      collapseIfPaused: true,
+      data: oldWelcome,
+      emptyState: 'Awaiting first signup',
+    }));
+    if (newWelcome !== undefined) {
+      // Only render when the env var is set (welcome_new === null
+      // means env unset, so we drop the card; any other shape —
+      // including {error}, {} from a 404 fetch — still renders so
+      // misconfigurations are visible).
+      if (newWelcome !== null) {
+        cards.push(automationCard({
+          eyebrow: 'New free funnel · 7-day welcome',
+          badge: { kind: 'active', label: 'Active' },
+          data: newWelcome,
+          emptyState: 'Awaiting first signup',
+        }));
+      }
+    }
+    cards.push(automationCard({
+      eyebrow: 'Paid funnel · 7-day onboarding',
+      data: purchase,
+      emptyState: 'Awaiting first sale',
+    }));
+
     wrap.innerHTML = `
+      ${renderFunnelComparison(oldWelcome, newWelcome)}
       <div class="email-grid">
-        ${automationCard({ eyebrow: 'Free funnel · 3-day welcome',     data: e.welcome  })}
-        ${automationCard({ eyebrow: 'Paid funnel · 7-day onboarding',  data: e.purchase })}
+        ${cards.join('')}
       </div>
     `;
   }
 
-  function automationCard({ eyebrow, data }) {
+  // True when the automation's MailerLite response signals it is
+  // not currently running. Both signals are cross-referenced
+  // because MailerLite's response shape varies slightly across
+  // plan tiers / API vintages — `enabled: false` is the modern
+  // signal, `status: 'paused' | 'disabled' | 'inactive'` covers
+  // older / edge-case responses.
+  function isAutomationPaused(d) {
+    if (!d || d.error) return false;
+    if (d.enabled === false) return true;
+    const s = String(d.status || '').toLowerCase();
+    return s === 'paused' || s === 'disabled' || s === 'inactive';
+  }
+
+  // Funnel comparison strip. Shown when both old + new welcome
+  // automations have a "pitch email" (the last email in their
+  // respective sequences) with at least 10 sends. Below that
+  // threshold, a single placeholder explains the gating so the
+  // empty space isn't mistaken for a bug.
+  //
+  // We define "pitch" as the LAST email in the sequence (highest
+  // position). For old 3-day this is email 3; for new 7-day it's
+  // email 7. If MailerLite reorders steps in the future, the
+  // last-by-position rule still resolves to the actual last email.
+  function renderFunnelComparison(oldData, newData) {
+    // Only render when BOTH automations are configured + healthy.
+    // If new welcome isn't configured at all, the comparison
+    // doesn't make sense -- skip the strip entirely.
+    if (!oldData || oldData.error || !newData || newData.error) return '';
+    const oldPitch = lastEmail(oldData);
+    const newPitch = lastEmail(newData);
+    const PITCH_MIN_SENDS = 10;
+
+    const newPitchSent = Number(newPitch?.sent || 0);
+    const oldPitchSent = Number(oldPitch?.sent || 0);
+
+    if (newPitchSent < PITCH_MIN_SENDS) {
+      return `
+        <div class="funnel-comparison">
+          <span class="funnel-comparison__placeholder">
+            Comparison available after 10+ sends on the new funnel
+            (currently ${fmt.int(newPitchSent)}).
+          </span>
+        </div>
+      `;
+    }
+
+    const fmtPitch = (label, pitch, classMod) => {
+      const open = pitch ? Math.round((Number(pitch.open_rate || 0) * 100)) : 0;
+      const click = pitch ? Math.round((Number(pitch.click_rate || 0) * 100)) : 0;
+      const sent = pitch ? Number(pitch.sent || 0) : 0;
+      return `
+        <span>
+          <strong${classMod ? ` class="${classMod}"` : ''}>${escapeHtml(label)}:</strong>
+          ${open}% open · ${click}% click on pitch
+          <span style="opacity:0.7">(${fmt.int(sent)} sent)</span>
+        </span>
+      `;
+    };
+
+    return `
+      <div class="funnel-comparison">
+        ${fmtPitch('Old funnel', oldPitch, 'funnel-comparison__label--legacy')}
+        ${oldPitchSent >= PITCH_MIN_SENDS
+          ? fmtPitch('New funnel', newPitch)
+          : `<span>${fmtPitch('New funnel', newPitch)} <span style="opacity:0.7">(old funnel below threshold — old data is historical)</span></span>`
+        }
+      </div>
+    `;
+  }
+
+  function lastEmail(d) {
+    if (!d || !Array.isArray(d.emails) || d.emails.length === 0) return null;
+    // emails are already ordered by position (server walks the
+    // parent_id chain); last entry is the last email in the flow.
+    return d.emails[d.emails.length - 1];
+  }
+
+  // automationCard config:
+  //   eyebrow:           short title shown at the top of the card
+  //   data:              shaped automation response (or null/{error})
+  //   badge:             { kind: 'active'|'legacy'|'paused', label }
+  //                      Renders a pill next to the title.
+  //   legacy:            true → muted styling (panel--legacy class)
+  //   collapseIfPaused:  true + automation paused → render a single
+  //                      summary line instead of the full email
+  //                      breakdown (per spec: collapse the legacy
+  //                      welcome card once Leo pauses it)
+  //   emptyState:        custom string for the zero-sends header
+  //                      ('Awaiting first signup' / 'Awaiting first
+  //                      sale' / etc.). Falls back to 'No sends yet'.
+  function automationCard({ eyebrow, data, badge, legacy, collapseIfPaused, emptyState }) {
+    const panelClasses = ['panel'];
+    if (legacy) panelClasses.push('panel--legacy');
+    const panelClass = panelClasses.join(' ');
+
+    const titleHtml = `
+      <div class="panel__title">
+        ${escapeHtml(eyebrow)}
+        ${badge ? `<span class="panel__badge panel__badge--${escapeHtml(badge.kind)}">${escapeHtml(badge.label)}</span>` : ''}
+      </div>
+    `;
+
     // 1. Not configured — env var unset.
     if (!data) {
       return `
-        <div class="panel">
-          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+        <div class="${panelClass}">
+          ${titleHtml}
           <div class="empty" style="padding:18px 0">Not configured</div>
         </div>
       `;
@@ -1549,8 +1750,8 @@
     // 2. Scoped per-automation error.
     if (data.error) {
       return `
-        <div class="panel">
-          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+        <div class="${panelClass}">
+          ${titleHtml}
           <div class="error" style="margin-top:6px">${escapeHtml(data.error)}</div>
         </div>
       `;
@@ -1564,23 +1765,41 @@
     const name = data.automation_name ? escapeHtml(data.automation_name) : '—';
     const emails = Array.isArray(data.emails) ? data.emails : [];
 
+    // 3. Collapsed view — per spec, the legacy welcome card collapses
+    // to a one-line summary once Leo pauses the automation in
+    // MailerLite. We only collapse when there's actual sent volume to
+    // summarize; a paused automation with zero sends still benefits
+    // from showing the full "no data yet" empty state.
+    if (collapseIfPaused && isAutomationPaused(data) && sent > 0) {
+      const open = Math.round(Number(overall.open_rate || 0) * 100);
+      const pitch = lastEmail(data);
+      const pitchClick = pitch ? Math.round(Number(pitch.click_rate || 0) * 100) : 0;
+      return `
+        <div class="${panelClass}">
+          ${titleHtml}
+          <div class="email-panel__sent" style="font-size:13px">
+            ${name} (paused) — ${fmt.int(sent)} sent · ${open}% open · ${pitchClick}% pitch clicks
+          </div>
+        </div>
+      `;
+    }
+
     // Header line: "X completed · Y in flow · Z sent" — drop any field
     // that's zero so the line stays tidy when MailerLite hasn't started
-    // populating an automation yet (very common for the post-purchase
-    // sequence pre-first-sale).
+    // populating an automation yet (common for new automations or the
+    // post-purchase sequence pre-first-sale).
     const headerBits = [];
     if (completed > 0) headerBits.push(`${fmt.int(completed)} completed`);
     if (inFlow > 0)    headerBits.push(`${fmt.int(inFlow)} in flow`);
     if (sent > 0)      headerBits.push(`${fmt.int(sent)} sent`);
     const headerLine = headerBits.length
       ? headerBits.join(' · ')
-      : 'No sends yet';
+      : (emptyState || 'No sends yet');
 
     // Aggregate open/click row only renders when there's actual send
     // volume. Showing "0% open" against zero sends is meaningless and
-    // makes the post-purchase card look broken before its first sale.
-    // MailerLite gives us pre-aggregated rates in data.overall — no
-    // need to derive from per-email rows.
+    // makes a freshly-launched automation look broken before its first
+    // signup. MailerLite gives us pre-aggregated rates in data.overall.
     const aggregateRows = sent > 0 ? `
       <div class="stat-row">
         <span class="stat-row__label">Overall open rate</span>
@@ -1602,8 +1821,8 @@
     // silent empty list.
     if (!emails.length) {
       return `
-        <div class="panel">
-          <div class="panel__title">${escapeHtml(eyebrow)}</div>
+        <div class="${panelClass}">
+          ${titleHtml}
           <div class="email-panel__subject">${name}${status}</div>
           <div class="email-panel__sent">${escapeHtml(headerLine)}</div>
           <div class="empty" style="padding:18px 0">No email steps in this automation</div>
@@ -1612,8 +1831,8 @@
     }
 
     return `
-      <div class="panel">
-        <div class="panel__title">${escapeHtml(eyebrow)}</div>
+      <div class="${panelClass}">
+        ${titleHtml}
         <div class="email-panel__subject">${name}${status}</div>
         <div class="email-panel__sent">${escapeHtml(headerLine)}</div>
         ${aggregateRows}

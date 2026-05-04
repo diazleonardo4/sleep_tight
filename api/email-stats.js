@@ -1,9 +1,16 @@
 // GET /api/email-stats  (header: x-auth-token)
 //
-// Returns engagement stats for the two MailerLite automations Sleep
+// Returns engagement stats for the MailerLite automations Sleep
 // Tight runs:
-//   - welcome  : 3-day free-funnel sequence triggered on free signup
-//   - purchase : 7-day post-purchase sequence triggered after a paid sale
+//   - welcome_old : legacy 3-day free-funnel (winding down — kept
+//                   running for subscribers mid-flow during the
+//                   transition; replaced by welcome_new for new
+//                   signups)
+//   - welcome_new : new 7-day free-funnel (active default for new
+//                   signups; better timing, bridge email, feedback
+//                   links, rewritten pitch)
+//   - purchase    : 7-day post-purchase sequence triggered after a
+//                   paid sale
 //
 // Sleep Tight uses MailerLite automations (triggered email sequences),
 // not campaigns (one-shot broadcasts). We hit Connect's
@@ -13,19 +20,27 @@
 // dashboard on the next refresh, no redeploy needed.
 //
 // Env vars:
-//   MAILERLITE_API_TOKEN                Connect-API token (NOT classic v2)
-//   MAILERLITE_WELCOME_AUTOMATION_ID    3-day welcome sequence id
-//   MAILERLITE_PURCHASE_AUTOMATION_ID   7-day post-purchase sequence id
+//   MAILERLITE_API_TOKEN                  Connect-API token (NOT classic v2)
+//   MAILERLITE_WELCOME_AUTOMATION_ID      legacy 3-day welcome sequence id
+//   MAILERLITE_NEW_WELCOME_AUTOMATION_ID  new 7-day welcome sequence id
+//   MAILERLITE_PURCHASE_AUTOMATION_ID     7-day post-purchase sequence id
 //
-// All env vars are optional. If a *_AUTOMATION_ID is unset, that key
-// is null in the response and the dashboard renders "Not configured"
-// for that card without erroring.
+// All env vars are optional. If a *_AUTOMATION_ID is unset:
+//   - welcome_old / purchase  → null in the response; the dashboard
+//                               renders "Not configured" for that card
+//   - welcome_new             → null in the response; the dashboard
+//                               omits the card entirely (during the
+//                               transition window the new automation
+//                               might not exist yet, and we don't
+//                               want to flash "Not configured" until
+//                               Leo creates it)
 //
 // Response shape:
 // {
-//   fetched_at: <epoch ms>,
-//   welcome:  <automationResult> | null,
-//   purchase: <automationResult> | null,
+//   fetched_at:  <epoch ms>,
+//   welcome_old: <automationResult> | null,
+//   welcome_new: <automationResult> | null,
+//   purchase:    <automationResult> | null,
 // }
 // where <automationResult> is one of:
 //   { error, automation_id }                                fetch failed
@@ -55,8 +70,12 @@ const cache = new Map();
 const CACHE_MS = 5 * 60 * 1000;
 
 const AUTOMATION_KEYS = [
-  { slot: 'welcome',  envVar: 'MAILERLITE_WELCOME_AUTOMATION_ID' },
-  { slot: 'purchase', envVar: 'MAILERLITE_PURCHASE_AUTOMATION_ID' },
+  // Order is incidental — we expand `results` into a slot-keyed
+  // object below, so renaming or reordering here only affects the
+  // parallel-fetch issue order, not the response shape.
+  { slot: 'welcome_old', envVar: 'MAILERLITE_WELCOME_AUTOMATION_ID' },
+  { slot: 'welcome_new', envVar: 'MAILERLITE_NEW_WELCOME_AUTOMATION_ID' },
+  { slot: 'purchase',    envVar: 'MAILERLITE_PURCHASE_AUTOMATION_ID' },
 ];
 
 module.exports = async (req, res) => {
@@ -66,7 +85,8 @@ module.exports = async (req, res) => {
   if (!token) {
     return res.status(200).json({
       fetched_at: Date.now(),
-      welcome: null,
+      welcome_old: null,
+      welcome_new: null,
       purchase: null,
       reason: 'MAILERLITE_API_TOKEN not set',
     });
@@ -84,13 +104,14 @@ module.exports = async (req, res) => {
   }
 
   // Parallel fetch — each fetchOne() is fail-isolated, so one
-  // automation 404'ing can't take down the other side.
+  // automation 404'ing can't take down the other side. Fan results
+  // back out into a slot-keyed envelope so consumers don't depend
+  // on AUTOMATION_KEYS ordering.
   const results = await Promise.all(config.map(c => fetchOne(c, token)));
-  const data = {
-    fetched_at: Date.now(),
-    welcome: results[0],
-    purchase: results[1],
-  };
+  const data = { fetched_at: Date.now() };
+  for (let i = 0; i < config.length; i++) {
+    data[config[i].slot] = results[i];
+  }
   cache.set(cacheKey, { data, at: Date.now() });
   return res.status(200).json(data);
 };
@@ -174,10 +195,18 @@ function shapeAutomation(automation, config) {
     bounce_rate:  numFloat(stats.bounce_rate),
   };
 
+  // `enabled` is whatever MailerLite returns — typically a boolean.
+  // We pass through unchanged so the dashboard can render the
+  // collapsed view when the legacy welcome automation gets paused
+  // mid-transition. Paused automations also flip `status` to a
+  // non-running value, so the dashboard checks both as a belt +
+  // suspenders against MailerLite's slightly-inconsistent shape
+  // across plan tiers / response vintages.
   return {
     automation_id: a.id || config.automationId,
     automation_name: a.name || a.title || '',
     status: a.status || '',
+    enabled: a.enabled,
     completed: num(stats.completed_subscribers_count),
     in_flow:   num(stats.subscribers_in_queue_count),
     overall,
