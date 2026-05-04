@@ -92,7 +92,7 @@
 
 const crypto = require('crypto');
 const { getRedis } = require('../lib/redis');
-const { utcToDashboardDate } = require('./_utils/dates');
+const { utcToDashboardDate, todayInDashboardTZ } = require('./_utils/dates');
 
 const COUNTER_TTL = 60 * 60 * 24 * 365; // match /api/track
 const EVENT_TTL   = 60 * 60 * 24 * 90;  // match /api/track
@@ -243,26 +243,53 @@ async function handleWrite(req, res, url, qRaw, aRaw) {
 async function handleStats(req, res) {
   if (!checkAuth(req, res)) return;
 
-  const hit = statsCache.get('all');
+  // FEEDBACK_START_DATE filter — when set to a YYYY-MM-DD string,
+  // the dashboard ignores feedback events from earlier dates so
+  // pre-launch test responses (Leo testing the endpoint before the
+  // automation went live) don't muddy live-segment numbers. The
+  // raw events / counters stay in Redis untouched; this is purely
+  // a read-time view filter.
+  //
+  // We key the in-memory cache by the resolved start date so a
+  // change to the env var (or the write path also bumps the cache
+  // bust) propagates within the next refresh instead of waiting
+  // for the 60s memo to expire under a stale start-date snapshot.
+  const startDate = resolveFeedbackStartDate();
+  const cacheKey = `start=${startDate || ''}`;
+
+  const hit = statsCache.get(cacheKey);
   if (hit && Date.now() - hit.at < STATS_CACHE_MS) {
     return res.status(200).json({ ...hit.data, cached: true, cached_at: hit.at });
   }
 
   try {
-    const data = await buildReport();
-    statsCache.set('all', { data, at: Date.now() });
+    const data = await buildReport(startDate);
+    statsCache.set(cacheKey, { data, at: Date.now() });
     return res.status(200).json(data);
   } catch (err) {
     return res.status(502).json({ error: `Feedback stats error: ${err.message}` });
   }
 }
 
-async function buildReport() {
+// Validate FEEDBACK_START_DATE. Accept YYYY-MM-DD only (which is
+// what utcToDashboardDate / e.date in the event records emit).
+// Anything else returns null, which means "no filter, show all".
+// Returning null on invalid input matches the codebase's
+// fail-soft pattern -- we never want a typo'd env var to silently
+// hide all feedback by, say, comparing strings against "true".
+function resolveFeedbackStartDate() {
+  const raw = (process.env.FEEDBACK_START_DATE || '').trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return raw;
+}
+
+async function buildReport(startDate /* YYYY-MM-DD or null */) {
   const redis = getRedis();
 
   const questions = await redis.smembers('feedback:questions');
   if (!questions || questions.length === 0) {
-    return { fetched_at: Date.now(), questions: [] };
+    return { fetched_at: Date.now(), questions: [], start_date: startDate || null };
   }
 
   // Two-pass fetch:
@@ -286,10 +313,30 @@ async function buildReport() {
     }
   }
 
+  // Counter source split:
+  //   - No start date  -> read pre-aggregated all-time counters
+  //                       (feedback:total:<q>:<a>). One MGET, fastest.
+  //   - Start date set -> sum the per-date counters
+  //                       (count:<date>:feedback:<q>:<a>) for every
+  //                       date >= startDate. We CANNOT just subtract
+  //                       a "totals from date X" snapshot from the
+  //                       running total -- the all-time counter
+  //                       already includes the test events we want
+  //                       to hide, and there's no "totals as of
+  //                       date X" stored anywhere.
+  //
+  // The per-date counters are deduplicated (the write path
+  // decrements them on answer flips), so summing them is the
+  // correct view -- not the same as scanning raw events, which
+  // would double-count the audit-trail copies.
   let totals = [];
   if (pairs.length > 0) {
-    const keys = pairs.map(p => `feedback:total:${p.q}:${p.a}`);
-    totals = await redis.mget(...keys);
+    if (startDate) {
+      totals = await sumPerDateCounters(redis, pairs, startDate);
+    } else {
+      const keys = pairs.map(p => `feedback:total:${p.q}:${p.a}`);
+      totals = await redis.mget(...keys);
+    }
   }
 
   const byQ = new Map();
@@ -326,7 +373,74 @@ async function buildReport() {
   // surface first on the dashboard.
   out.sort((x, y) => y.total - x.total);
 
-  return { fetched_at: Date.now(), questions: out };
+  return {
+    fetched_at: Date.now(),
+    start_date: startDate || null, // surfaced so the dashboard can label the section if/when filtered
+    questions: out,
+  };
+}
+
+// Sum count:<date>:feedback:<q>:<a> across every date in
+// [startDate, today_in_dashboard_TZ]. Bundled into a single big
+// MGET so we pay one round trip regardless of how many days are
+// in the window. With ~365-day counter TTL and pairs.length * days
+// typically ≤ a few hundred, this is well under any practical
+// MGET size limit.
+async function sumPerDateCounters(redis, pairs, startDate) {
+  const today = todayInDashboardTZ();
+  const dates = enumerateInclusive(startDate, today);
+  if (dates.length === 0 || pairs.length === 0) {
+    return pairs.map(() => '0');
+  }
+
+  const keys = [];
+  for (const p of pairs) {
+    for (const d of dates) {
+      keys.push(`count:${d}:feedback:${p.q}:${p.a}`);
+    }
+  }
+  const vals = keys.length ? await redis.mget(...keys) : [];
+
+  const totals = [];
+  for (let i = 0; i < pairs.length; i++) {
+    let sum = 0;
+    for (let j = 0; j < dates.length; j++) {
+      const v = vals[i * dates.length + j];
+      const n = parseInt(v, 10);
+      if (Number.isFinite(n)) sum += n;
+    }
+    // Per-date counter rollback (answer flips) can take an
+    // individual day below 0; clamp the *aggregate* at 0 so the
+    // dashboard never renders a "negative responses" cell. The
+    // per-day negativity self-cancels in normal flows -- if
+    // someone flipped from yes->no, yes:-1 and no:+1 sum to 0
+    // for the (q, yes) pair on that day. Clamping is defense
+    // against partial expirations / out-of-window flips.
+    totals.push(String(Math.max(0, sum)));
+  }
+  return totals;
+}
+
+// Inclusive date enumeration for two YYYY-MM-DD strings. Returns
+// [] if start > end. Mirrors analytics.js's enumerateDates but
+// kept inline here to avoid widening the dates.js module surface
+// for a single caller.
+function enumerateInclusive(since, until) {
+  const [sy, sm, sd] = since.split('-').map(Number);
+  const [uy, um, ud] = until.split('-').map(Number);
+  if (!sy || !uy) return [];
+  const start = Date.UTC(sy, sm - 1, sd);
+  const end = Date.UTC(uy, um - 1, ud);
+  if (end < start) return [];
+  const out = [];
+  for (let t = start; t <= end; t += 86400000) {
+    const d = new Date(t);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    out.push(`${y}-${m}-${day}`);
+  }
+  return out;
 }
 
 // ---------- shared helpers ----------
